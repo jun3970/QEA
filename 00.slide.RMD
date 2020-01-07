@@ -1,0 +1,684 @@
+---
+title: "The Impact of Quarterly Earnings Announcement on Stock Daily Returns"
+subtitle: "based on Fama-French three-factor model"
+author: "Hongyu Hu"
+institute: ""
+date: "`r Sys.Date()`"
+output:
+  beamer_presentation:
+    theme: "Singapore"
+    fonttheme: "structurebold"
+    colortheme: "beaver"
+    incremental: no
+    keep_tex: yes
+    slide_level: 2
+fontsize: 11pt
+
+header-includes:
+- \usepackage{placeins}
+- \usepackage[flushleft]{threeparttable}
+---
+
+
+# Motivation
+
+## Background
+
+<!-- According to the efficient market theory,  -->
+<!-- the stock market converts all material public information -->
+<!-- into daily returns through trading. -->
+
+
+- There are numbers of retail investors in Chinese A-share markets 
+selling or buying stocks motivated by public infromation and financial report.
+
+- Routine quarterly earnings reports issued by listed firms are highly anticipated 
+and can cause investors to bid up the stock's price or else pummel it down.
+
+
+## Event date, $\tau$
+
+We use $\tau$ as the time index rather than $t$
+due to the earnings revealed date among firms are different.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+datdir <- '~/NutSync/MyData/QEAData/'
+ReptInfo <- dir(datdir, pattern = 'Rept.csv$') %>%
+            paste0(datdir, .) %>%
+            read_delim(delim='\t', na = '',
+                       col_types = cols(Stkcd = col_character(),
+                                        Accper = col_date(format = "%Y-%m-%d"),
+                                        Annodt = col_date(format = "%Y-%m-%d"),
+                                        Annowk = col_integer())) %>%
+            subset(select=c(Stkcd,Sctcd,Annodt,Accper))  %>% 
+            arrange(Stkcd) 
+
+EDSZ1st <- ReptInfo %>% subset((Accper == ymd('2017-03-31')) & (Sctcd == 2), select=c('Annodt'))
+EDSH1st <- ReptInfo %>% subset((Accper == ymd('2017-03-31')) & (Sctcd == 1), select=c('Annodt'))
+EDSZ3rd <- ReptInfo %>% subset((Accper == ymd('2017-09-30')) & (Sctcd == 2), select=c('Annodt'))
+EDSH3rd <- ReptInfo %>% subset((Accper == ymd('2017-09-30')) & (Sctcd == 1), select=c('Annodt'))
+
+ED <- cbind(EDSH1st[sample(1:nrow(EDSH1st), 10),],
+            EDSZ1st[sample(1:nrow(EDSZ1st), 10),],
+            EDSH3rd[sample(1:nrow(EDSH3rd), 10),],
+            EDSZ3rd[sample(1:nrow(EDSZ3rd), 10),]) %>% 
+  `names<-`(c('SH.1st','SZ.1st', 'SH.3rd', 'SZ.3rd'))
+
+print(ED, row.names=FALSE)
+```
+
+
+
+## Path of returns when earnings report are released
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+datdir <- '~/NutSync/MyData/QEAData/CH3/'
+filecd <- dir(datdir, pattern = 'DretMean[.]csv$') %>% paste0(datdir, .)
+DR <- matrix(-40:40, ncol = 1)
+for (i in filecd) {
+    DRS <- read_delim(i, delim='\t', na = '') 
+    DR <- cbind(DR,DRS)
+}
+
+DR %<>% `names<-`(c('Timeline',
+                    str_sub(dir(datdir, pattern = 'DretMean[.]csv$'), start=1L, end=10L))) %>% `[`(31:51,)
+  
+
+multiplot <- function(..., plotlist = NULL, file, cols = 1, layout = NULL) {
+    library(grid)
+    
+    # Make a list from the ... arguments and plotlist
+    plots <- c(list(...), plotlist)
+    
+    numPlots = length(plots)
+    
+    # If layout is NULL, then use 'cols' to determine layout
+    if (is.null(layout)) {
+        # Make the panel ncol: Number of columns of plots nrow: Number of rows
+        # needed, calculated from # of cols
+        layout <- matrix(seq(1, cols * ceiling(numPlots/cols)), ncol = cols, 
+            nrow = ceiling(numPlots/cols))
+    }
+    
+    if (numPlots == 1) {
+        print(plots[[1]])
+        
+    } else {
+        # Set up the page
+        grid.newpage()
+        pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+        
+        # Make each plot, in the correct location
+        for (i in 1:numPlots) {
+            # Get the i,j matrix positions of the regions that contain this subplot
+            matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+            
+            print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row, layout.pos.col = matchidx$col))
+        }
+    }
+}
+
+# for (i in 1:length(filecd)) {
+#   assign(paste0('P', i),
+#          ggplot(DR[, c(1L, 1L+i)], aes(x=Timeline, y=DR[, 1L+i])) +
+#            geom_line() + geom_point() +
+#            labs(x = "Time line", y = 'Daily return', title = names(DR)[1L+i]))
+# }
+
+P1 <- ggplot(DR[, c(1,2)], aes(x=Timeline, y=DR[, 2])) +
+           geom_line() + geom_point() + ylim(-0.02, +0.02) +
+           labs(x = "Time line", y = 'Daily return', title = names(DR)[2])
+
+P2 <- ggplot(DR[, c(1,3)], aes(x=Timeline, y=DR[, 3])) +
+           geom_line() + geom_point() + ylim(-0.02, +0.02) +
+           labs(x = "Time line", y = 'Daily return', title = names(DR)[3])
+
+P3 <- ggplot(DR[, c(1,4)], aes(x=Timeline, y=DR[, 4])) +
+           geom_line() + geom_point() + ylim(-0.02, +0.02) +
+           labs(x = "Time line", y = 'Daily return', title = names(DR)[4])
+
+P4 <- ggplot(DR[, c(1,5)], aes(x=Timeline, y=DR[, 5])) +
+           geom_line() + geom_point() + ylim(-0.02, +0.02) +
+           labs(x = "Time line", y = 'Daily return', title = names(DR)[5])
+
+multiplot(P1, P2, P3, P4, cols = 2)
+
+```
+
+
+## Methodology
+
+- The purpose of this paper is to model and explain the **abnormal returns** attributable to quarterly earnings announcement underlying framework of **event study**.
+
+- We define abnormal return $AR$ as, \[AR_{i\tau} = R_{i\tau} - E(R_{i\tau}),\]
+where $R_{i\tau}$ equals actual stock return $R_{i\tau}$ for firm $i$ and event date $\tau$ 
+and $E(R_{i\tau})$ is the expected return $E(R_{i\tau})$ predicted by a model.
+
+
+## Methodology
+
+- $\tau = 0$ represents that the quarterly earnings report of a stock
+was released at data $\tau$.
+
+- The estimation window is used for **estimating the parameters** of market model,
+this allows $AR_{i\tau}$ to be calculated within the event window.
+
+![Timeline of an event study with significant dates](figure/timeline.png)
+
+
+## Hypothesis
+
+\begin{block}{Original null hypothesis}
+Special event such as quarterly financial announcement
+have no effects on the mean level of security returns,
+$E({\it AR}_{i\tau}) = 0$.
+\end{block}
+
+- Does the publicly issued financial report having the potential of 
+influencing the demand for various stocks and subsequently affecting their prices?
+
+- Has the stock market converted all material public information
+into daily returns through trading?
+
+
+## Literature
+
+*The adjustment of stock prices to new information.*  
+Fama, E. F., Fisher, L., Jensen, M. C., & Roll, R. (1969).  
+
+*Using daily stock returns: The case of event studies.*  
+Brown, S. J., & Warner, J. B. (1985).  
+
+*Security returns around earnings announcements.*  
+Ball, R., & Kothari, S. P. (1991).  
+
+*Has the information content of quarterly earnings announcements declined in the past three decades?*  
+Landsman, W. R., & Maydew, E. L. (2002).  
+
+*Earnings announcement promotions: A Yahoo Finance field experiment. *
+Lawrence, A., Ryans, J., Sun, E., & Laptev, N. (2018). 
+
+
+# Modeling the daily returns
+
+
+## Data and samples
+
+The data we use, which include data on returns,
+trading, financial statements, and quarterly financial reports,
+are form Wind information Inc. (WIND) and 
+China Stock Market & Accounting Research (CSMAR) database.
+To enable reasonable precision and power,
+we eliminate stocks which
+
+- estimate window existed non-trading status
+
+- listed less than six months
+
+- having less than 180 trading records in the past year
+or less than 15 trading records in the past months.
+
+
+## Measuring the expected returns, ${\it ER}_{i\tau}$
+
+<!-- The starting point is to calculate the **actual daily returns**, -->
+<!-- $R_{i\tau}-R_{f\tau}$, -->
+<!-- of stock $i$ at date $\tau$ where -->
+<!-- \( -->
+<!-- R_{i\tau} = \mbox{log} (P_{i\tau} / P_{i\tau-1}) -->
+<!-- \) -->
+<!-- and $R_{f\tau}$ is the risk-free rate. -->
+
+We choose the Fama-French 3-Factor model
+to estimate the expected daily returns $E(R_{i\tau})$,
+\begin{equation}
+R_{i\tau}-R_{f\tau} = \alpha_i + \beta_{i}(R_{m\tau} - R_{f\tau}) +
+s_{i}\text{SMB}_\tau + v_{i}\text{VMG}_\tau +
+\varepsilon_{i \tau}.
+\end{equation}
+Note that this model is modified according to characteristics of Chinese A-share markets,
+as Liu et al. (2019) recommended.
+
+
+## A three factor model in China
+
+The Fama-French 3-Factor model states that 
+the actual daily return, $R_{i\tau}-R_{f\tau}$, 
+could be explained by three mimicking risk factors,
+
+- $R_{m\tau} - R_{f\tau}$, Market risk factor, 
+the return on the value-weight market portfolio minus the risk-free return.
+
+- $\text{SMB}_\tau$, Size factor, the return on a diversified portfolio of small stocks
+minus the return on a diversified portfolio of big stocks.
+
+- $\text{VMG}_\tau$, Value factor, the difference between the returns on 
+diversified portfolios of high and low ratio of earnings-to-price stocks.
+
+
+
+## Intercepts of portfolios, $\alpha$
+
+![](figure/2017-09-30_6_21_wekbind_FF3_table_intercept.pdf)
+
+
+## The Distribution of OLS Estimator
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+datdir <- '~/NutSync/MyData/QEAData/CH3/'
+# Specifying trem information
+Accprd <- as.Date('2017-09-30')
+Pretype <- '6'
+Markettype <- '21'
+weekterm <- 'wekbind'
+modeltype <- 'FF3'
+
+
+## Obtain the plots of OLS estimator used above QEA-FF data ===========================
+
+require(grid)
+library(latex2exp)
+
+cdcoef <- paste(Accprd, Pretype, Markettype, weekterm, modeltype, 
+                'OLScoef', 'CH3', 'SMB', 'VMG', '3',sep='_') %>%
+          paste0(datdir, ., '.csv')
+OLScoef <- as.data.frame(read_delim(cdcoef, delim=',', na = ''))
+OLScoef[, 3:ncol(OLScoef)] <- round(OLScoef[, 3:ncol(OLScoef)], 6)
+
+
+grid.newpage()
+vplayout <- function(x,y){viewport(layout.pos.row = x, layout.pos.col = y)}
+if(ncol(OLScoef)==5) {
+    {pushViewport(viewport(layout = grid.layout(2,2)))
+        print(qplot(OLScoef$MKT, xlab=TeX('$\\beta_1$ of MKT'),
+                    ylab = "Count",bins=100), vp = vplayout(1,1:2))
+        print(qplot(OLScoef$SMB, xlab=TeX('$\\beta_2$ of SMB'),
+                    ylab = "Count",bins=50), vp = vplayout(2,1))       
+        print(qplot(OLScoef$VMG, xlab=TeX('$\\beta_3$ of VMG'),
+                    ylab = "Count",bins=50), vp = vplayout(2,2))}
+} else if (ncol(OLScoef)==7) {
+    {pushViewport(viewport(layout = grid.layout(2,4)))
+        print(qplot(OLScoef$MKT, xlab=TeX('$\\beta_1$ of MKT'),
+                    ylab = "Count",bins=100), vp = vplayout(1,1:4))
+        print(qplot(OLScoef$SMB, xlab=TeX('$\\beta_2$ of SMB'),
+                    ylab = "Count",bins=50), vp = vplayout(2,1))       
+        print(qplot(OLScoef$HML, xlab=TeX('$\\beta_3$ of VMG'),
+                    ylab = "Count",bins=50), vp = vplayout(2,2))
+        print(qplot(OLScoef$RMW, xlab=TeX('$\\beta_4$ of RMW'),
+                    ylab = "Count",bins=50), vp = vplayout(2,3))
+        print(qplot(OLScoef$CMA, xlab=TeX('$\\beta_5$ of CMA'),
+                    ylab = "Count",bins=50), vp = vplayout(2,4))}
+} else {
+    pushViewport(viewport(layout = grid.layout(1,1)))
+    print(qplot(OLScoef$MKT, xlab=TeX('$\\beta_1$ of MKT'),
+                ylab = "Count",bins=100), vp = vplayout(1,1))
+}
+
+
+```
+
+
+## Classificaation by penalized least squares
+
+We apply the penalized least squares from Su et al. (2016) 
+to **cluster** the stocks in Chinese A-share markets,
+\begin{equation}
+\min_{\boldsymbol \beta} \left[ \|\mathbf{y}-\mathbf{X} \boldsymbol{\beta}\|^{2} +
+\frac{\rho}{N} \sum_{i=1}^N \textstyle\prod_{k=1}^{K}
+\parallel \! \beta_{i} -  \alpha_{k} \! \parallel \right].
+\end{equation}
+The penalty term in the multiplicative expression
+\textcolor{red}{shrinks the individual-level parameter vector $\beta_{i}$
+to a partical unknown group-level parameter vector $\alpha_{k}$}.
+Note that we push the punishment only on parameters of factor $SMB$ and $VMG$.
+
+
+##
+
+\begin{table}[!htbp] 
+\centering
+
+\caption{Penalized least squares estimation results}
+
+\resizebox{0.9\textwidth}{!}{
+\begin{threeparttable}
+
+\begin{tabular}{crrrr}
+\hline \hline 
+\textbf{Slope coefficients}   &   Unclassified   &   Group A    &    Group B    &   Group C  \\
+\hline
+\\
+MKT     &     1.045***      &   1.170***       &      0.828***     &     0.789***    \\
+        &     (200.601)     &   (174.600)      &      (99.850)     &     (56.674)    \\
+SMB     &     0.728***      &   0.925***       &      0.556***     &     -0.235***   \\
+        &     (65.533)      &   (61.988)       &      (34.280)     &     (-8.817)    \\
+VMG     &     0.409***      &   0.546***       &      0.242***     &     -0.096***   \\
+        &     (45.765)      &   (47.233)       &      (16.862)     &     (-4.176)    \\
+obs     &     1636          &   1051           &      451          &     134         \\
+\hline
+\end{tabular}
+
+\begin{tablenotes}
+  \item Note:
+  \item[a] The data running in regression
+  $ R_{i\tau}-R_{f\tau} = \beta_{i}(R_{m\tau} - R_{f\tau}) + s_{i}\text{SMB}_\tau + v_{i}\text{VMG}_\tau + \varepsilon_{i \tau}$ has been zero-centered;
+  \item[b] *** 1\% significant; ** 5\% significant; * 10\% significant.
+\end{tablenotes}
+
+\end{threeparttable}
+}
+
+\end{table}
+
+
+<!-- ```{r eval=FALSE, warning=FALSE, include=FALSE, results='asis'} -->
+<!-- options(digits=3) -->
+<!-- library(tidyverse) -->
+<!-- library(magrittr) -->
+<!-- PLS <- paste(datdir, "2017-09-30_6_21_wekbind_FF3_PLScoef_CH3_SMB_VMG_3.csv", sep = '') %>% -->
+<!--  read.csv(header = T, as.is = TRUE) %>% as.data.frame() -->
+<!-- PLS %<>% `[`(,c(1,3,4,6,7,9)) -->
+<!-- table <- matrix(0, nrow = 6, ncol = 3) -->
+<!-- table[c(1,3,5), 1] <- PLS[, 1] -->
+<!-- table[c(1,3,5), 2] <- PLS[, 3] -->
+<!-- table[c(1,3,5), 3] <- PLS[, 5] -->
+<!-- table[c(2,4,6), 1] <- PLS[, 2] -->
+<!-- table[c(2,4,6), 2] <- PLS[, 4] -->
+<!-- table[c(2,4,6), 3] <- PLS[, 6] -->
+<!--  -->
+<!-- library(knitr) -->
+<!-- library(kableExtra) -->
+<!--  -->
+<!-- kable(as.data.frame(table), "latex", caption = "title") %>%  -->
+<!-- kable_styling(latex_options = c("striped"), full_width = F) %>% cat() -->
+<!-- ``` -->
+
+##
+
+### Abnormal return, ${\it AR}_{i\tau}$
+
+After we obtain the parameters from estimation window, 
+for firm $i$ and event date $\tau$, 
+we can decompose returns in event window as
+\[
+R_{i\tau}^{*} =  E(R_{i\tau}^{*} | X_\tau) + AR_{i\tau}^{*}.
+\]
+
+### Cumulative abnormal return, ${\it CAR}_\tau$
+
+Define ${\it CAR}_i(\tau_1,\tau_2)$ as the sample sum of included ${\it AR}_{i\tau}$ from $\tau_1$ to $\tau_2$, we have 
+\(
+{\it CAR}_i(\tau_1, \tau_2) = \sum_{\tau=\tau_1}^{\tau_2} {\widehat{AR}_{i\tau}}.
+\)
+Given $N$ securities, the sample average $AR_\tau$ is
+\(
+\overline{AR}_\tau = \frac{1}{N} \sum_{i=1}^N \widehat{AR}_{i\tau},
+\)
+so the average cumulative abnormal return is
+\(
+\overline{CAR}_i(\tau_1, \tau_2) = \sum_{\tau=\tau_1}^{\tau_2} {\overline{AR}_{\tau}}.
+\)
+
+
+## Path of group-CAR
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+timeline <- c(-20:+40) 
+windlen <- length(timeline)
+
+## Read the result from MATLAB ========
+library(R.matlab)
+PLSpath <- "~/NutSync/QEA/Matlab_PLS"
+
+# Group information
+PLSclus <- readMat(file.path(PLSpath, paste('group', Accprd, Pretype, Markettype, weekterm, 
+                                            'CH3', 'SMB', 'VMG', '3', sep = '_') %>% 
+                                      paste0('.mat'))) %>% `[[`(1) 
+colnames(PLSclus) <- c("group")
+grpnum <- length(unique(PLSclus))
+
+cdcar <- paste(Accprd, Pretype, Markettype, weekterm, modeltype, 
+                'CAR', 'CH3', 'SMB', 'VMG', '3',sep='_') %>%
+          paste0(datdir, ., '.csv')
+QEAcar <- as.data.frame(read_delim(cdcar, delim=',', na = ''))
+
+## Path of CAR ========================================================================
+
+titchar <- paste0('Paths of grouped cumulative abnormal return (CAR) ', 
+                  '\nattributed to quarterly earnings announcement ',
+                  '\narround accounting period ', Accprd)
+ggcar <- data.frame(matrix(0, windlen*(grpnum+1),3))
+for (i in 1:(grpnum+1)) {
+    ifelse(i==1, ggcar[(1:windlen),] <- cbind(timeline,QEAcar[,i],c(i)),
+           ggcar[(i-1)*windlen + (1:windlen), ] <- cbind(timeline,QEAcar[,i],c(i)))
+}
+colnames(ggcar) <- c('timeline','CAR', 'group')
+ggcar$group <- as.factor(ggcar$group)
+
+
+if (grpnum+1==4) {
+  ggplot(ggcar, aes(timeline, CAR, 
+                    linetype = group, colour = group)) + 
+    geom_line() + geom_point() +
+    scale_linetype_manual(name='Group',values=c("solid", 'solid', 'solid', "dotted"),
+                          labels=c('PLS_G1', 'PLS_G2', 'PLS_G3','Unclassified')) +
+    scale_colour_manual(name="Group", values = c("blue", "red", 'green', "black"),
+                        labels=c('PLS_G1', 'PLS_G2', 'PLS_G3','Unclassified')) +
+    labs(title = titchar, x = "Time line", y = 'Cumulative Abnormal Return') + 
+    theme(plot.title = element_text(size=11), 
+          axis.ticks.y = element_blank()) 
+  
+} else if (grpnum+1==3) {
+    ggplot(ggcar, aes(timeline, CAR, 
+                      linetype = group, colour = group)) + 
+        geom_line() + geom_point() + coord_fixed() +
+        scale_linetype_manual(name='Group',values=c("solid", 'solid', "dotted"),
+                              labels=c('PLS_G1', 'PLS_G2', 'Unclassified')) +
+        scale_colour_manual(name="Group", values = c("blue", "red", "black"),
+                        labels=c('PLS_G1', 'PLS_G2', 'Unclassified')) +
+        labs(title = titchar, x = "Time line", y = 'Cumulative Abnormal Return') + 
+        theme(plot.title = element_text(size=11), 
+              axis.ticks.y = element_blank())
+} else print('Group number is error')
+
+```
+
+
+<!-- ## Power test  -->
+
+<!-- Under the null hypothesis that  -->
+<!-- the event has no influence on the mean and variance of returns, -->
+<!-- we can obtain the distribution of AR, -->
+<!-- \(AR_{i} \sim N(0, V_i),\) -->
+<!-- where  -->
+<!-- \( -->
+<!-- V_i = \sigma_{\varepsilon_{i}^{*}}^{2}+X_{i}^{*}\left(X_{i}^{*'} X_{i}\right)^{-1} X_{i}^{*^{\prime}} \sigma_{\varepsilon_{i}}^{2}. -->
+<!-- \) -->
+
+<!-- \[ -->
+<!-- \begin{aligned} -->
+<!-- V_i & = {\it Var}( AR_{i}) = E\left[\hat{\varepsilon}_{i}^{*} \hat\varepsilon_{i}^{*^{\prime}} \right] \\ -->
+<!-- & =E\left[\left[\varepsilon_{i}^{*}-X_{i}^{*}\left(\hat{\beta}_{i}-\beta_{i}\right)\right] -->
+<!-- \left[\varepsilon_{i}^{*}-X_{i}^{*}\left(\hat{\beta}_{i}-\beta_{i}\right)\right]^{\prime} \right] \\ -->
+<!-- & = E\left[\varepsilon_{i}^{*} \varepsilon_{i}^{*^{\prime}} - \varepsilon_{i}^{*} \left(\hat{\beta}_{i}-\beta_{i}\right)^{\prime} X_{i}^{*} -->
+<!-- - X_{i}^{*}\left(\hat{\beta}_{i}-\beta_{i}\right) \varepsilon_{i}^{*^{\prime}} \right. \\  -->
+<!-- & \quad \left. + X_{i}^{*}\left(\hat{\beta}_{i}-\beta_{i}\right) \left(\hat{\beta}_{i}-\beta_{i}\right) X_{i}^{*^{\prime}} \right] \\ -->
+<!-- & = I \sigma_{\varepsilon_{i}^{*}}^{2}+X_{i}^{*}\left(X_{i}^{*'} X_{i}\right)^{-1} X_{i}^{*^{\prime}} \sigma_{\varepsilon_{i}}^{2}. -->
+<!-- \end{aligned} -->
+<!-- \] -->
+
+<!-- Consequently we have -->
+<!-- \(\overline{CAR}(\tau_1, \tau_2) \sim N(0, \bar \sigma^2\left(\tau_1, \tau_2)\right),\) -->
+<!-- where $\bar \sigma^2_i(\tau_1, \tau_2)$ is unknown and can be consistently eatimated by -->
+<!-- \( -->
+<!-- \hat{\bar\sigma}^2(\tau_1, \tau_2) = -->
+<!-- \frac{1}{N^2} \sum_{i=1}^{N} \hat \sigma^2_i (\tau_1, \tau_2). -->
+<!-- \) -->
+
+<!-- ## -->
+
+
+<!-- ##  -->
+<!-- <!-- Note that our original null hypothesis is event haved no effect on  -->
+<!-- <!-- mean and variance of security returns. -->
+<!-- A **modified null hypothesis would be**: event has effect on mean return only. -->
+<!-- So the distribution of average $CAR$ could be transformed to standard normal distribution, -->
+<!-- \[ -->
+<!-- \frac{\overline{\it CAR}(\tau_1, \tau_2)}{\hat{\bar\sigma}(\tau_1, \tau_2) } -->
+<!-- \stackrel{a}{\sim} N(0, 1) -->
+<!-- \] -->
+<!-- where -->
+<!-- \( -->
+<!-- \hat{\bar\sigma}(\tau_1, \tau_2) -->
+<!-- = \frac{1}{N^2} \sum_{i=1}^{N}\left[ {\it CAR}_i(\tau_1, \tau_2) - \overline{\it CAR}(\tau_1, \tau_2)  \right]^2. -->
+<!-- \) -->
+
+
+<!-- ## -->
+
+
+<!-- ## Review the regular steps in event studies -->
+
+<!-- 1. Exactly define the event and identify the exact event date -->
+
+<!-- 2. Determine the estimation and event window -->
+
+<!-- 3. Determine the estimation method for **expected return** calculation -->
+
+<!-- 4. Calculate **abnormal returns** (AR) and cumulative abnormal returns (CAR) -->
+
+<!-- 5. Define null and alternative hypotheses, then test for statistical significance -->
+
+
+<!-- ## -->
+
+<!-- Through the previous section, we have learned about that -->
+<!-- the publicly issued quarterly earnings announcement of listed frim -->
+<!-- has the potential of affecting itself prices. -->
+<!-- Next, we analyze the **origin** and **fluctuation** of abnormal return ($AR$). -->
+
+
+
+# Identify the abnormal return
+
+
+## A Perspective on Trading Strategies
+
+When the intercept, $\hat \alpha_i$, in Fama-French 3-factor model
+is highly statistical significantly,
+the abnormal return, ${\it AR}$, equals
+\begin{equation}
+AR_{i\tau}^* = \hat\alpha_i + \epsilon_{i\tau}^*, 
+\end{equation}
+Obviously, only $\epsilon_{i\tau}^{*}$ is the abnormal return 
+brought by quarterly earnings announcement.
+There is an interesting perspective to explain the existence and variation of $AR$,
+
+- $\alpha$, Earnings momentum (Post-earning announcement drift)
+
+- $\epsilon$, Value or growth investing (Reaction to information about firm's value)
+
+
+## The values of abnormal return
+
+Because of the abnormal return consists of two parts, $\alpha$ and $\epsilon$, 
+so its positive and negative also depends on the directions and 
+absolute values of $\alpha$ and $\epsilon$. 
+Assume the abnormal return $AR$ is positive, there maight be three cases included, 
+
+- both $\alpha$ and $\epsilon$ are positive;
+
+- $\alpha$ is positive, $\epsilon$ is negative, 
+and the absolute value of $\alpha$ is greater than $\epsilon$'s;
+
+- the third is the negative $\alpha$ and the positive $\epsilon$, 
+but the absolute value of $\epsilon$ is greater than $\alpha$'s.
+
+
+## $\alpha$
+
+Following Carhart (1997),
+We construct a PR1QR factor mimicking the momentum effect to explain the intercept,
+$\alpha$, in Fama-French 3-factor model,
+\begin{equation}
+\begin{aligned}
+R_{i\tau}-R_{f\tau} = & \mu_i + \beta_{i}(R_{m\tau} - R_{f\tau}) +
+s_{i}\text{SMB}_\tau + v_{i}\text{VMG}_\tau  \\
+& + p_i \text{PR1QR}_\tau  + e_{i\tau}.
+\end{aligned}
+\end{equation}
+
+<!-- the equal-weight average of firms  -->
+<!-- with the highest 30 percent eleven-month returns lagged three month -->
+<!-- minus the equal-weight average of firms  -->
+<!-- with the lowest 30 percent eleven-month returns lagged three month -->
+
+
+## $\epsilon$ 
+
+Inspired by Bamber (1987), we regress the grouped cumulative abnormal return, 
+$\sum_{\tau=-k}^{k}\epsilon_{g_i\tau}^{*}$,
+within event-window $\tau=(-k,k)$ on the index of standardized unexpected earnings (SUE) 
+calculated by seasonal random walk (SRW),
+\begin{equation}
+\sum_{\tau=-k}^{k} \epsilon_{g_i\tau}^{*} = \mu + \gamma \text{SUE}_{g_i}+
+e_{g_i},
+\quad {\rm for} \ k=1,\cdots,k_0.
+\end{equation}
+Note that we classified $i \in \hat G_k$ if $\hat \beta_i = \hat \alpha_i$ for some $k=1,\cdots,K_0$.
+
+##
+
+Under the hypothesis that the value invest strategy 
+is a significant source of return variation for the portfoloios
+in both the smaller-size and higher-$EP$ quintiles,
+we expect those stocks to have a more significant and larger value of $\gamma$.
+
+<!-- We compute $SUE_{i\tau}$ using a seasonal random walk,  -->
+<!-- in which $SUE{i\tau} = \Delta_{i\tau} / \sigma(\Delta_i)$,  -->
+<!-- $\Delta{i\tau}$ equals the quarter-over-quarter change in stock $i$’s quarterly earnings,  -->
+<!-- and $\sigma(\Delta_i)$ is the standard deviation of $\Delta_{i\tau}$ for the last eight quarters. -->
+
+
+<!-- ## -->
+
+<!-- Furthermore, We could compare the daily coefficients $\gamma$, -->
+<!-- which be long to any number of days -->
+<!-- before and after the release of the quarterly earnings announcement, -->
+<!-- running below group panel regression, -->
+<!-- \[ -->
+<!-- \epsilon_{g_i\tau} = \mu_{g_i} + ( \gamma \text{SUE}_{g_i}) \times  D_\tau -->
+<!-- + ( \gamma \text{SUE}_{g_i}) \times  (1 - D_\tau) -->
+<!-- + e_{g_i\tau}, -->
+<!-- \] -->
+
+
+## The adjustment effect of event QEA on momentum
+
+Furthermore, we regress the momentum effect $PR1QR$ on the average of grouped
+abnormal return $\tilde \epsilon_{g_i}$ attributable to quarterly earnings announcement,
+\begin{equation}
+\text{PR1QR}_{\tau} = \upsilon +
+\omega \tilde\epsilon_{g_i\tau} + \zeta^{\prime} \tilde Z_{g_i\tau} + \varepsilon_{g_i\tau},
+\quad {\rm for} \ k=1,\cdots,k_0.
+\end{equation}
+where $\tilde Z_{\tau}$ are the value-weighted control variables 
+$Turnover$, $Volatility$, and $Illiquidity$ etc.
+
+
+## Conclusion
+
+- We aims to identify the different parts of abnormal returns attributable to quarterly earnings announcement and to illustrate the pattern of its effects on stocks daily returns;
+
+- We hold the hypothesis that, in Chinese A-share markets, the release of corporate earnings will produce significant grouped abnormal returns, which are not captured by the Fama-French three factor model;
+
+- We expect the abnormal return could be explained by momentum effect and investing strategy. 
+
+<!-- Keywords: Asset pricing; Cluster analysis; heterogenous coefficients;  -->
+<!-- Factor models; Chinese A-share markets -->

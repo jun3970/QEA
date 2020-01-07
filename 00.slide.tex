@@ -1,0 +1,483 @@
+\documentclass[
+11pt,
+ignorenonframetext,
+]{beamer}
+\usetheme[]{Singapore}
+\usecolortheme{default}
+\usefonttheme[stillsansseriflarge,stillsansserifsmall]{structurebold}
+\setbeamertemplate{footline}[frame number]
+
+\usepackage{graphicx,grffile}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+\setlength{\emergencystretch}{3em}  % prevent overfull lines
+\providecommand{\tightlist}{%
+    \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-2}
+% set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+
+\usepackage{tikz,tcolorbox}
+\usetikzlibrary{shapes,calc}
+\tcbuselibrary{skins}
+\definecolor{myblue}{rgb}{0.15,0.15,0.53}
+\makeatletter
+
+%% 首行缩进
+\usepackage{indentfirst}
+%\setlength{\parindent}{2.8em}
+%% 设置段落间隔
+\setlength{\parskip}{0.7\baselineskip}
+%% 行间距为20pt
+\setlength{\baselineskip}{20pt}
+
+\setbeamertemplate{section in toc}{%
+    {\color{orange!70!black}\inserttocsectionnumber.}~\inserttocsection}
+\setbeamercolor{subsection in toc}{bg=white,fg=structure}
+\setbeamertemplate{subsection in toc}{%
+    \hspace{1.2em}{\color{orange}\rule[0.3ex]{3pt}{3pt}}~\inserttocsubsection\par}
+
+\setbeamerfont{myTOC}{series=\bfseries,size=\large}
+\AtBeginSection[]{\frame{\frametitle{\huge Outline}%
+        \usebeamerfont{myTOC}\tableofcontents[currentsection]}}
+\setbeamertemplate{navigation symbols}{}
+\usepackage{placeins}
+\usepackage[flushleft]{threeparttable}
+
+\title{The Impact of Quarterly Earnings Announcement on Stock Daily Returns}
+\subtitle{based on Fama-French three-factor model}
+\author{Hongyu Hu}
+\institute[JNU]
+{\textit{huhy.jnu@gmail.com} \\ % Your email address
+\medskip
+\textit{huhy\_1995@163.com} 
+}
+\date{2019-12-27}
+
+\begin{document}
+\frame{\titlepage}
+
+\hypertarget{motivation}{%
+\section{Motivation}\label{motivation}}
+
+\begin{frame}{Background}
+\protect\hypertarget{background}{}
+
+\begin{itemize}
+\item
+  There are numbers of retail investors in Chinese A-share markets
+  selling or buying stocks motivated by public infromation and financial
+  report.
+\item
+  Routine quarterly earnings reports issued by listed firms are highly
+  anticipated and can cause investors to bid up the stock's price or
+  else pummel it down.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}[fragile]{Event date, \(\tau\)}
+\protect\hypertarget{event-date-tau}{}
+
+We use \(\tau\) as the time index rather than \(t\) due to the earnings
+revealed date among firms are different.
+
+\begin{verbatim}
+##      SH.1st     SZ.1st     SH.3rd     SZ.3rd
+##  2017-04-28 2017-04-25 2017-10-28 2017-10-28
+##  2017-04-25 2017-04-28 2017-10-27 2017-10-25
+##  2017-04-29 2017-04-29 2017-10-28 2017-10-28
+##  2017-04-26 2017-04-29 2017-10-31 2017-10-31
+##  2017-04-28 2017-04-25 2017-10-31 2017-10-24
+##  2017-04-29 2017-04-29 2017-10-31 2017-10-17
+##  2017-04-27 2017-04-26 2017-10-30 2017-10-25
+##  2017-04-26 2017-04-19 2017-10-31 2017-10-27
+##  2017-04-28 2017-04-28 2017-10-27 2017-10-31
+##  2017-04-29 2017-04-28 2017-10-28 2017-10-24
+\end{verbatim}
+
+\end{frame}
+
+\begin{frame}{Path of returns when earnings report are released}
+\protect\hypertarget{path-of-returns-when-earnings-report-are-released}{}
+
+\includegraphics{00.slide_files/figure-beamer/unnamed-chunk-2-1.pdf}
+
+\end{frame}
+
+\begin{frame}{Methodology}
+\protect\hypertarget{methodology}{}
+
+\begin{itemize}
+\item
+  The purpose of this paper is to model and explain the \textbf{abnormal
+  returns} attributable to quarterly earnings announcement underlying
+  framework of \textbf{event study}.
+\item
+  We define abnormal return \(AR\) as,
+  \[AR_{i\tau} = R_{i\tau} - E(R_{i\tau}),\] where \(R_{i\tau}\) equals
+  actual stock return \(R_{i\tau}\) for firm \(i\) and event date
+  \(\tau\) and \(E(R_{i\tau})\) is the expected return \(E(R_{i\tau})\)
+  predicted by a model.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Methodology}
+\protect\hypertarget{methodology-1}{}
+
+\begin{itemize}
+\item
+  \(\tau = 0\) represents that the quarterly earnings report of a stock
+  was released at data \(\tau\).
+\item
+  The estimation window is used for \textbf{estimating the parameters}
+  of market model, this allows \(AR_{i\tau}\) to be calculated within
+  the event window.
+\end{itemize}
+
+\begin{figure}
+\centering
+\includegraphics{figure/timeline.png}
+\caption{Timeline of an event study with significant dates}
+\end{figure}
+
+\end{frame}
+
+\begin{frame}{Hypothesis}
+\protect\hypertarget{hypothesis}{}
+
+\begin{block}{Original null hypothesis}
+Special event such as quarterly financial announcement
+have no effects on the mean level of security returns,
+$E({\it AR}_{i\tau}) = 0$.
+\end{block}
+
+\begin{itemize}
+\item
+  Does the publicly issued financial report having the potential of
+  influencing the demand for various stocks and subsequently affecting
+  their prices?
+\item
+  Has the stock market converted all material public information into
+  daily returns through trading?
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Literature}
+\protect\hypertarget{literature}{}
+
+\emph{The adjustment of stock prices to new information.}\\
+Fama, E. F., Fisher, L., Jensen, M. C., \& Roll, R. (1969).
+
+\emph{Using daily stock returns: The case of event studies.}\\
+Brown, S. J., \& Warner, J. B. (1985).
+
+\emph{Security returns around earnings announcements.}\\
+Ball, R., \& Kothari, S. P. (1991).
+
+\emph{Has the information content of quarterly earnings announcements
+declined in the past three decades?}\\
+Landsman, W. R., \& Maydew, E. L. (2002).
+
+\emph{Earnings announcement promotions: A Yahoo Finance field
+experiment. } Lawrence, A., Ryans, J., Sun, E., \& Laptev, N. (2018).
+
+\end{frame}
+
+\hypertarget{modeling-the-daily-returns}{%
+\section{Modeling the daily returns}\label{modeling-the-daily-returns}}
+
+\begin{frame}{Data and samples}
+\protect\hypertarget{data-and-samples}{}
+
+The data we use, which include data on returns, trading, financial
+statements, and quarterly financial reports, are form Wind information
+Inc.~(WIND) and China Stock Market \& Accounting Research (CSMAR)
+database. To enable reasonable precision and power, we eliminate stocks
+which
+
+\begin{itemize}
+\item
+  estimate window existed non-trading status
+\item
+  listed less than six months
+\item
+  having less than 180 trading records in the past year or less than 15
+  trading records in the past months.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Measuring the expected returns, \({\it ER}_{i\tau}\)}
+\protect\hypertarget{measuring-the-expected-returns-it-er_itau}{}
+
+We choose the Fama-French 3-Factor model to estimate the expected daily
+returns \(E(R_{i\tau})\), \begin{equation}
+R_{i\tau}-R_{f\tau} = \alpha_i + \beta_{i}(R_{m\tau} - R_{f\tau}) +
+s_{i}\text{SMB}_\tau + v_{i}\text{VMG}_\tau +
+\varepsilon_{i \tau}.
+\end{equation} Note that this model is modified according to
+characteristics of Chinese A-share markets, as Liu et al.~(2019)
+recommended.
+
+\end{frame}
+
+\begin{frame}{A three factor model in China}
+\protect\hypertarget{a-three-factor-model-in-china}{}
+
+The Fama-French 3-Factor model states that the actual daily return,
+\(R_{i\tau}-R_{f\tau}\), could be explained by three mimicking risk
+factors,
+
+\begin{itemize}
+\item
+  \(R_{m\tau} - R_{f\tau}\), Market risk factor, the return on the
+  value-weight market portfolio minus the risk-free return.
+\item
+  \(\text{SMB}_\tau\), Size factor, the return on a diversified
+  portfolio of small stocks minus the return on a diversified portfolio
+  of big stocks.
+\item
+  \(\text{VMG}_\tau\), Value factor, the difference between the returns
+  on diversified portfolios of high and low ratio of earnings-to-price
+  stocks.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Intercepts of portfolios, \(\alpha\)}
+\protect\hypertarget{intercepts-of-portfolios-alpha}{}
+
+\includegraphics{figure/2017-09-30_6_21_wekbind_FF3_table_intercept.pdf}
+
+\end{frame}
+
+\begin{frame}{The Distribution of OLS Estimator}
+\protect\hypertarget{the-distribution-of-ols-estimator}{}
+
+\includegraphics{00.slide_files/figure-beamer/unnamed-chunk-3-1.pdf}
+
+\end{frame}
+
+\begin{frame}{Classificaation by penalized least squares}
+\protect\hypertarget{classificaation-by-penalized-least-squares}{}
+
+We apply the penalized least squares from Su et al.~(2016) to
+\textbf{cluster} the stocks in Chinese A-share markets, \begin{equation}
+\min_{\boldsymbol \beta} \left[ \|\mathbf{y}-\mathbf{X} \boldsymbol{\beta}\|^{2} +
+\frac{\rho}{N} \sum_{i=1}^N \textstyle\prod_{k=1}^{K}
+\parallel \! \beta_{i} -  \alpha_{k} \! \parallel \right].
+\end{equation} The penalty term in the multiplicative expression
+\textcolor{red}{shrinks the individual-level parameter vector $\beta_{i}$
+to a partical unknown group-level parameter vector $\alpha_{k}$}. Note
+that we push the punishment only on parameters of factor \(SMB\) and
+\(VMG\).
+
+\end{frame}
+
+\begin{frame}{}
+\protect\hypertarget{section}{}
+
+\begin{table}[!htbp] 
+\centering
+
+\caption{Penalized least squares estimation results}
+
+\resizebox{0.9\textwidth}{!}{
+\begin{threeparttable}
+
+\begin{tabular}{crrrr}
+\hline \hline 
+\textbf{Slope coefficients}   &   Unclassified   &   Group A    &    Group B    &   Group C  \\
+\hline
+\\
+MKT     &     1.045***      &   1.170***       &      0.828***     &     0.789***    \\
+        &     (200.601)     &   (174.600)      &      (99.850)     &     (56.674)    \\
+SMB     &     0.728***      &   0.925***       &      0.556***     &     -0.235***   \\
+        &     (65.533)      &   (61.988)       &      (34.280)     &     (-8.817)    \\
+VMG     &     0.409***      &   0.546***       &      0.242***     &     -0.096***   \\
+        &     (45.765)      &   (47.233)       &      (16.862)     &     (-4.176)    \\
+obs     &     1636          &   1051           &      451          &     134         \\
+\hline
+\end{tabular}
+
+\begin{tablenotes}
+  \item Note:
+  \item[a] The data running in regression
+  $ R_{i\tau}-R_{f\tau} = \beta_{i}(R_{m\tau} - R_{f\tau}) + s_{i}\text{SMB}_\tau + v_{i}\text{VMG}_\tau + \varepsilon_{i \tau}$ has been zero-centered;
+  \item[b] *** 1\% significant; ** 5\% significant; * 10\% significant.
+\end{tablenotes}
+
+\end{threeparttable}
+}
+
+\end{table}
+
+\end{frame}
+
+\begin{frame}{}
+\protect\hypertarget{section-1}{}
+
+\begin{block}{Abnormal return, \({\it AR}_{i\tau}\)}
+
+After we obtain the parameters from estimation window, for firm \(i\)
+and event date \(\tau\), we can decompose returns in event window as \[
+R_{i\tau}^{*} =  E(R_{i\tau}^{*} | X_\tau) + AR_{i\tau}^{*}.
+\]
+
+\end{block}
+
+\begin{block}{Cumulative abnormal return, \({\it CAR}_\tau\)}
+
+Define \({\it CAR}_i(\tau_1,\tau_2)\) as the sample sum of included
+\({\it AR}_{i\tau}\) from \(\tau_1\) to \(\tau_2\), we have
+\({\it CAR}_i(\tau_1, \tau_2) = \sum_{\tau=\tau_1}^{\tau_2} {\widehat{AR}_{i\tau}}.\)
+Given \(N\) securities, the sample average \(AR_\tau\) is
+\(\overline{AR}_\tau = \frac{1}{N} \sum_{i=1}^N \widehat{AR}_{i\tau},\)
+so the average cumulative abnormal return is
+\(\overline{CAR}_i(\tau_1, \tau_2) = \sum_{\tau=\tau_1}^{\tau_2} {\overline{AR}_{\tau}}.\)
+
+\end{block}
+
+\end{frame}
+
+\begin{frame}{Path of group-CAR}
+\protect\hypertarget{path-of-group-car}{}
+
+\includegraphics{00.slide_files/figure-beamer/unnamed-chunk-4-1.pdf}
+
+\end{frame}
+
+\hypertarget{identify-the-abnormal-return}{%
+\section{Identify the abnormal
+return}\label{identify-the-abnormal-return}}
+
+\begin{frame}{A Perspective on Trading Strategies}
+\protect\hypertarget{a-perspective-on-trading-strategies}{}
+
+When the intercept, \(\hat \alpha_i\), in Fama-French 3-factor model is
+highly statistical significantly, the abnormal return, \({\it AR}\),
+equals \begin{equation}
+AR_{i\tau}^* = \hat\alpha_i + \epsilon_{i\tau}^*, 
+\end{equation} Obviously, only \(\epsilon_{i\tau}^{*}\) is the abnormal
+return brought by quarterly earnings announcement. There is an
+interesting perspective to explain the existence and variation of
+\(AR\),
+
+\begin{itemize}
+\item
+  \(\alpha\), Earnings momentum (Post-earning announcement drift)
+\item
+  \(\epsilon\), Value or growth investing (Reaction to information about
+  firm's value)
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{The values of abnormal return}
+\protect\hypertarget{the-values-of-abnormal-return}{}
+
+Because of the abnormal return consists of two parts, \(\alpha\) and
+\(\epsilon\), so its positive and negative also depends on the
+directions and absolute values of \(\alpha\) and \(\epsilon\). Assume
+the abnormal return \(AR\) is positive, there maight be three cases
+included,
+
+\begin{itemize}
+\item
+  both \(\alpha\) and \(\epsilon\) are positive;
+\item
+  \(\alpha\) is positive, \(\epsilon\) is negative, and the absolute
+  value of \(\alpha\) is greater than \(\epsilon\)'s;
+\item
+  the third is the negative \(\alpha\) and the positive \(\epsilon\),
+  but the absolute value of \(\epsilon\) is greater than \(\alpha\)'s.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{\(\alpha\)}
+\protect\hypertarget{alpha}{}
+
+Following Carhart (1997), We construct a PR1QR factor mimicking the
+momentum effect to explain the intercept, \(\alpha\), in Fama-French
+3-factor model, \begin{equation}
+\begin{aligned}
+R_{i\tau}-R_{f\tau} = & \mu_i + \beta_{i}(R_{m\tau} - R_{f\tau}) +
+s_{i}\text{SMB}_\tau + v_{i}\text{VMG}_\tau  \\
+& + p_i \text{PR1QR}_\tau  + e_{i\tau}.
+\end{aligned}
+\end{equation}
+
+\end{frame}
+
+\begin{frame}{\(\epsilon\)}
+\protect\hypertarget{epsilon}{}
+
+Inspired by Bamber (1987), we regress the grouped cumulative abnormal
+return, \(\sum_{\tau=-k}^{k}\epsilon_{g_i\tau}^{*}\), within
+event-window \(\tau=(-k,k)\) on the index of standardized unexpected
+earnings (SUE) calculated by seasonal random walk (SRW),
+\begin{equation}
+\sum_{\tau=-k}^{k} \epsilon_{g_i\tau}^{*} = \mu + \gamma \text{SUE}_{g_i}+
+e_{g_i},
+\quad {\rm for} \ k=1,\cdots,k_0.
+\end{equation} Note that we classified \(i \in \hat G_k\) if
+\(\hat \beta_i = \hat \alpha_i\) for some \(k=1,\cdots,K_0\).
+
+\end{frame}
+
+\begin{frame}{}
+\protect\hypertarget{section-2}{}
+
+Under the hypothesis that the value invest strategy is a significant
+source of return variation for the portfoloios in both the smaller-size
+and higher-\(EP\) quintiles, we expect those stocks to have a more
+significant and larger value of \(\gamma\).
+
+\end{frame}
+
+\begin{frame}{The adjustment effect of event QEA on momentum}
+\protect\hypertarget{the-adjustment-effect-of-event-qea-on-momentum}{}
+
+Furthermore, we regress the momentum effect \(PR1QR\) on the average of
+grouped abnormal return \(\tilde \epsilon_{g_i}\) attributable to
+quarterly earnings announcement, \begin{equation}
+\text{PR1QR}_{\tau} = \upsilon +
+\omega \tilde\epsilon_{g_i\tau} + \zeta^{\prime} \tilde Z_{g_i\tau} + \varepsilon_{g_i\tau},
+\quad {\rm for} \ k=1,\cdots,k_0.
+\end{equation} where \(\tilde Z_{\tau}\) are the value-weighted control
+variables \(Turnover\), \(Volatility\), and \(Illiquidity\) etc.
+
+\end{frame}
+
+\begin{frame}{Conclusion}
+\protect\hypertarget{conclusion}{}
+
+\begin{itemize}
+\item
+  We aims to identify the different parts of abnormal returns
+  attributable to quarterly earnings announcement and to illustrate the
+  pattern of its effects on stocks daily returns;
+\item
+  We hold the hypothesis that, in Chinese A-share markets, the release
+  of corporate earnings will produce significant grouped abnormal
+  returns, which are not captured by the Fama-French three factor model;
+\item
+  We expect the abnormal return could be explained by momentum effect
+  and investing strategy.
+\end{itemize}
+
+\end{frame}
+
+\end{document}

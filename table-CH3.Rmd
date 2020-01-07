@@ -1,0 +1,146 @@
+---
+# title: "Regression Results of CH-3 (Liu, 2018) in Chinese A-share Markets"
+# author: "Hongyu Hu"
+# date: "11/12/2019"
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \usepackage{multirow}
+  - \usepackage{wrapfig}
+  - \usepackage{float}
+  - \usepackage{colortbl}
+  - \usepackage{caption}
+        \captionsetup{width=\textwidth}
+  - \usepackage{pdflscape}
+  - \usepackage{tabu}
+  - \usepackage{threeparttable}
+  - \usepackage{threeparttablex}
+  - \usepackage[normalem]{ulem}
+  - \usepackage{makecell}
+  - \usepackage{xcolor}
+output:
+    pdf_document:
+      latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```    
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+
+# generate the tables as shown in Fama(1993)
+# using package knitr::kable and kableExtra
+
+library(knitr)
+library(kableExtra)
+options(knitr.table.format = "latex")
+usepackage_latex("threeparttable")
+library(lubridate)
+
+# regressions results in portfolio by quarter =====
+load('C:/Users/Hu/Documents/R/QEA/HuCH3.RData')
+# quarter terms
+Accprd <- as.Date(names(potfolreg), origin = '1970-01-01')
+
+# extract the list of estimate and t-value
+# grouped with intercept and explanation variables
+varname <- c('(Intercept)', 'mkt_rf', 'SMB', 'VMG')
+staname <- c('Estimate', 't value')
+potfolreg.est <- lapply(potfolreg, function(x) {
+    lapply(x, function(y) coef(summary(y)) %>% as.data.frame()%>% 
+               `[`(varname, staname))
+})
+
+
+Accprd.char <- vector(length = length(Accprd))
+for (i in 1:length(Accprd)) {
+  Accprd.char[i] <- paste(Accprd[i] + days(1), ' to ', Accprd[i] %m+% months(3))
+}
+
+packrow <- rep(5, length=length(Accprd.char)) %>% `names<-`(Accprd.char)
+
+
+    varname <- c('(Intercept)', 'MKT', 'SMB', 'VMG') # for solve question about underline
+    for(l in 1:length(varname)){
+  
+        ifelse(l==1, # ture for intercept
+               {estmat <- lapply(potfolreg.est, function(x){ 
+                 sapply(x, `[`, l, 'Estimate') %>% 
+                  matrix(nrow=5, byrow=TRUE) * 100 
+                }) %>% do.call(rbind.data.frame, .) %>% `row.names<-`(NULL)
+               estmatt <- lapply(potfolreg.est, function(x){ 
+                 sapply(x, `[`, l, 't value') %>% 
+                  matrix(nrow=5, byrow=TRUE)
+                }) %>% do.call(rbind.data.frame, .) %>% `row.names<-`(NULL)},
+               {estmat <- lapply(potfolreg.est, function(x){ 
+                 sapply(x, `[`, l, 'Estimate') %>% 
+                  matrix(nrow=5, byrow=TRUE)
+                }) %>% do.call(rbind.data.frame, .) %>% `row.names<-`(NULL)
+                estmatt <- lapply(potfolreg.est, function(x){ 
+                 sapply(x, `[`, l, 't value') %>% 
+                  matrix(nrow=5, byrow=TRUE) 
+                }) %>% do.call(rbind.data.frame, .) %>% `row.names<-`(NULL)})
+
+        ifelse(l==1, # caption
+               capt <- paste(paste('Intercepts from excess stock return regressions for
+                             25 stock portfolios formed on size and earnings-to-price ratio: ',
+                             paste(Accprd[1] + days(1), ' to ', Accprd[length(Accprd)] %m+% months(3),
+                                   ', one accounting quarter. ', sep = '')),
+                             'The regression model is $R_{t} - R_{ft} =
+                             \\alpha + \\beta\ (mkt - R_f)_t + s SMB_t + v VMG_t + \\epsilon_t$.'),
+               capt <- paste(paste('Regressions of excess stock returns on 25 stock portfolios
+                             formed on size and earnings-to-price ratio on the stock-market returns, ',
+                             paste(varname[l]，': ', sep=''),
+                             paste(Accprd[1] + days(1), ' to ', Accprd[length(Accprd)] %m+% months(3), 
+                                   ', one accounting quarter. ', sep='')),
+                             'The regression model is $R_{t} - R_{ft} =
+                             \\alpha + \\beta\ (mkt - R_f)_t + s SMB_t + v VMG_t + \\epsilon_t$.'))
+
+        cbind(estmat, estmatt) %>%  # statistics
+        round(digits=3) %>% format(nsmall=3) %>%
+        # add size quintile for distinguish size portfolios
+        cbind(c('Samll', as.character(2:4), 'Big'), .) %>% 
+          `colnames<-`(c("Size quintile", rep(c("Low", "2", "3", "4", "High"),2))) %>%
+            kable(caption = capt, booktabs = T, escape = F, longtable = T,  align=rep('r', 10)) %>%
+                add_header_above(c(" " = 1,
+                                   "Estimate" = 5, "t value" = 5)) %>%
+                add_header_above(c(" " = 1,
+                                   "Earnings-to-price (EP) quintiles" = 10), italic = T) %>%
+                    kable_styling(latex_options = c("hold_position", "repeat_header"),
+                                  full_width = F) %>% 
+                    pack_rows(index=packrow,
+                               latex_gap_space = "1.5em") %>% 
+                    footnote(alphabet = c("$R_t$ is the value-weighted percent
+                                          daily return on all the stocks in the 25 size-EP portfolios.
+                                          $R_f$ is the daily one-year deposit interest rate
+                                          specified by the Central Bank of China.
+                                          SMB (small minus big) is the return on the
+                                          mimicking portfolio for the size factor in stock returns.
+                                          VMG (value minus growth) is the return on the
+                                          mimicking portfolio for the earnings-to-price factor.",
+                                          "The 25 size-EP stock portfolios are formed as follows.
+                                          each quarter \\\\textit{q} Chinese A-share markets
+                                          quintlie breakpoints for size, \\\\textit{ME},
+                                          measured at the end of last quarter \\\\textit{q-1},
+                                          are used to allocate stocks to five size quintiles.
+                                          similarly, the quintile breakpoints for \\\\textit{EP}
+                                          are used to allocate stocks to five earnings-to-price
+                                          ratio quintiles. The 25 size-EP portfolios are the
+                                          intersections of the five size and
+                                          the five \\\\textit{EP} groups.",
+                                          "The value-weighted daily percent returns on the
+                                          25 portfolios are calculated form the begining of quarter
+                                          \\\\textit{q} to the end of quarter \\\\textit{q} using
+                                          the number of earnings and all common shares
+                                          within the financial report of accounting quarter
+                                          \\\\textit{q-1} and the closing price at the last day of
+                                          quarter \\\\textit{q-1}."),
+                             escape=FALSE,
+                             threeparttable=T) %>%
+            landscape() %>% cat()
+    }
+
+```
+
