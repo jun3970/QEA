@@ -1,412 +1,434 @@
-## CC Hongyu Hu 
-## 2018.04--2019.10
-
-## Summary of this Script ====
-# This R script are writen for obtain the 5*5 stock portfolios 
-# and 2*3 mimicing risk factors formed on size and 
+# Summary of this Script ====
+# CC Hongyu Hu
+# 2018.04--2019.10
+# 
+# This R script are writen for obtain the 5*5 stock portfolios
+# and 2*3 mimicing risk factors formed on size and
 # earnings-to-price (EP) equity in Chinese A-share markets,
 # whos code symbol begin with 00, 30, 60.
-
-# The quantity of a stock *size* is computed as the end of 
+# 
+# The quantity of a stock *size* is computed as the end of
 # previous quarter’s closing price times its total shares.
 # A stock’s *EP* is the ratio of the quarterly earnings which is
-# the most recently reported net profit excluding nonrecurrent 
-# gains/losses in last quarter to the product of its closing price 
-# and total shares at ending of last quarter. 
-
-# We weight each stock by its market capitalization 
-# produce by its outstanding A shares, including nontradable shares, 
+# the most recently reported net profit excluding nonrecurrent
+# gains/losses in last quarter to the product of its closing price
+# and total shares at ending of last quarter.
+# 
+# We weight each stock by its market capitalization
+# produce by its outstanding A shares, including nontradable shares,
 # product its daily closing price at present.
-
-# The market factor, MKT, is the return on the value-weighted portfolio 
+# 
+# The market factor, MKT, is the return on the value-weighted portfolio
 # formed with all stocks in Chinese A-Share Markets
 # in excess of the current period one-year deposit interest rate.
-
-# For the size factor, SMB (small minus big), we obtain it by using 
+# 
+# For the size factor, SMB (small minus big), we obtain it by using
 # the median size of stocks belong to Chinese A-Share markets to
-# split stocks into two groups, small and big. 
-
-# To obtain the value factor, VMG (value minus growth), 
+# split stocks into two groups, small and big.
+# 
+# To obtain the value factor, VMG (value minus growth),
 # We break stocks into three groups by earnings-to-price ratio
-# based on the breakpoints for the ranked bottom 30% (value, V), 
+# based on the breakpoints for the ranked bottom 30% (value, V),
 # middle 40% (Medium, M), and top 30% (growth, G) in each quarter 'q'.
-
-# That is our size and size factors, denoted as SMB and VMG, 
+# 
+# That is our size and size factors, denoted as SMB and VMG,
 # combined the returns on these six intersect portfolios as follows,
-#
-# SMB = 1/3 (Small Value + Small Neutral + Small Growth) – 
+# 
+# SMB = 1/3 (Small Value + Small Neutral + Small Growth) –
 #       1/3 (Big Value + Big Neutral + Big Growth).
-#
-# VMG = 1/2 (Small Value + Big Value) – 
+# 
+# VMG = 1/2 (Small Value + Big Value) –
 #       1/2 (Small Growth + Big Growth).
-#
-# Note that daily value-weighted returns on the six portfolios 
-# are calculated from 'q' quarter to 'q+1' quarter 
+# 
+# Note that daily value-weighted returns on the six portfolios
+# are calculated from 'q' quarter to 'q+1' quarter
 # using available accounting data produced at quarter 'q-1'.
 
-
-library(tidyverse)
-library(plyr)
 library(magrittr)
+library(tidyverse)
 library(lubridate)
 
+library(glue)
+library(broom)
+library(multipanelfigure)
+library(RColorBrewer)
+####### Part I, import data ########
 
-# set the directory of original data 
-datdir <- '~/NutSync/MyData/QEAData/'  # Hu, PC-Carbon
-
-# Input the aggregate daily trading data =====
-trddat <- read_delim(paste0(datdir, 'TRD_Dalyr_CSMAR.txt'), delim = '\t', na = '',
-                     col_types = cols(Stkcd = col_character(),
-                                      Trddt = col_date(format = '%Y-%m-%d'),
-                                      Opnprc = col_number(),
-                                      Hiprc = col_number(),
-                                      Loprc = col_number(),
-                                      Clsprc = col_number(),
-                                      Dnshrtrd = col_number(),
-                                      Dnvaltrd = col_number(),
-                                      Dsmvosd = col_number(),
-                                      Dsmvtll = col_number(),
-                                      Markettype = col_integer(),
-                                      Trdsta = col_integer())) %>%
-    rename('TradingDate' = Trddt) %>%  # rename the column of trading date 
-    select(c(Stkcd,TradingDate,Opnprc,Hiprc,Loprc,Clsprc,
-             Dnshrtrd,Dnvaltrd,Dsmvosd,Dsmvtll,Markettype,Trdsta)) %>% 
-    filter(Markettype %in% c(1, 4, 16)) %>%  # Chinese A-Share markets
-    arrange(Stkcd, TradingDate) %>%   # sorting by stock and trading date
-    split(., .$Markettype) # generate the lists according to market class
-
-
-# dependent variable, Ri - Rf =====
-
-# calculate the daily returns
-for(i in 1:length(trddat)) {
-    trddat[[i]] <- cbind(trddat[[i]], Dret = NaN)
-    for (k in unique(trddat[[i]]$Stkcd)) {
-        Dret <- subset(trddat[[i]], Stkcd == k, select = c(Clsprc), drop = TRUE)
-        # take the logarithm of the closing price of stocks, and then do the difference
-        Dret <- c(NaN, log(Dret[-1] / Dret[-length(Dret)], base=exp(1))) 
-        trddat[[i]][which(trddat[[i]]$Stkcd == k), "Dret"] <- Dret; rm(Dret)
-    }
-    if (length(which(is.na(trddat[[i]]$Dret))) == length(unique(trddat[[i]]$Stkcd))){
-        trddat[[i]] <- trddat[[i]][complete.cases(trddat[[i]]),]
-    } else print(paste('Warning! Daily retruns of list', i, 
-                       'were calculated with vectorization error.'))
-} 
+# working directory
+setwd('~/OneDrive/Data.backup/QEAData/')
+# Output directory
+datdir <- file.path(getwd(), "CH3")
+# Import the aggregate data of daily trading in China A-Share market
+trddat <- read_delim('TRD_Dalyr_CSMAR.txt', delim = '\t', na = '',
+        col_types = cols(.default = col_double(), 
+        # stocks symbol, for tidy convenience 
+        # we set it's data class as factor (category)
+        Stkcd = col_character(),
+        # trading date
+        Trddt = col_date(format = '%Y-%m-%d'),
+        Dretwd = col_skip(), Adjprcwd = col_skip(), Adjprcnd = col_skip(),
+        # 1=SH-A, 2=SH-B, 4=SZ-A, 8=SZ-B, 16=startup, 32=Tech
+        Markettype = col_factor(levels = c(1,2,4,8,16,32)), 
+        # trading status and the late date of its capitalization changed
+        Trdsta = col_factor(levels = c(1:16)), Capchgdt = col_skip())) %>% 
+    # only the category of 1 indicate that stocks were traded normally 
+    filter(Trdsta == "1") %>% select(-Trdsta) %>%  
+    # focus on Chinese A-Share markets
+    filter(Markettype %in% as.character(c(1, 4, 16))) %>% droplevels() %>%  
+    # rename the column of trading date
+    rename("TradingDate" = Trddt) %>% 
+    # Select a specific time period
+    filter(TradingDate %within% interval('2012-01-01', '2019-12-31')) %>% 
+    # sorting by stock and trading date
+    arrange(Markettype, Stkcd, TradingDate) %>%   
+    #  generate the time series lists sort by stocks.
+    split(.$Stkcd)
 
 
-# Input daily one-year deposit interest rate, Rf 
-Rf <- read_delim(paste0(datdir, 'TRD_Nrrate_CSMAR.csv'), delim='\t', na = '',
-                 col_types = cols(Nrr1 = col_factor(levels = c('NRI01', 'TBC')),
-                                  Clsdt = col_date(format = '%Y-%m-%d'),
-                                  Nrrdaydt = col_double())) %>%
-    rename('TradingDate' = Clsdt) %>%
-    filter(Nrr1 == 'NRI01') %>% # select the one-year deposit interest rate
-    select(c(TradingDate, Nrrdaydt)) %>% 
-    arrange(TradingDate)
+#calculate the daily returns of stocks (dependent variable)
+trddat.Dret <- map(trddat, ~ {# closing price everyday
+                        Clsprc <- pull(.x, Clsprc) 
+                        # daily return
+                        Dret <- log( Clsprc[-1] / Clsprc[-length(Clsprc)], base=exp(1))})
+# confirm the results we calculated is same with CSMAR about daily returns of stocks
+# R_{it} = ln(P_{it}) - ln(P_{it-1})
+if(map2_lgl(trddat.Dret, trddat, ~ {
+    # my own results of stock's daily return
+    Dret.me <- round(.x, digits = 3)
+    Dret.CSMAR <- pull(.y, Dretnd)[-1] %>% round(digits = 3)
+    near(Dret.me, Dret.CSMAR) %>% any()}
+    ) %>% any()) {
+    print("Congratulations! The daily returns from CSMAR are same with us.")
+    rm(trddat.Dret)
+    } else print("Attention! The daily returns from CSMAR aren't same with us.")
+
+
+# Import the daily one-year-deposit-interest-rate, free-risk return in market 
+Nrrate <- read_delim('TRD_Nrrate_CSMAR.csv', delim='\t', na = '',
+                 col_types = cols_only(Nrr1 = col_factor(levels = c('NRI01', 'TBC')),
+                                       Clsdt = col_date(format = '%Y-%m-%d'),
+                                       Nrrdaydt = col_double())) %>%
+    # select the one-year deposit interest rate as the free-risk return
+    filter(Nrr1 == 'NRI01') %>% select(-Nrr1) %>% 
+    # you can either select the Treasury rate with 
+    # filter(Nrr1 == "TBC")
+    rename('TradingDate' = Clsdt)
+
 
 # Merge the trading data with risk-free rate using 'lapply'
-# and we get the result list grouping by trading date (then stock's symbol)
-trddat <- lapply(trddat, merge, Rf, by = 'TradingDate') %>% 
-    lapply(arrange, TradingDate, Stkcd)
+# and sort by trading date, then by stock symbol
+trddat %<>% lapply(inner_join, Nrrate, by = 'TradingDate') %>% 
+    lapply(arrange, TradingDate)
 
 
-# Setup Working day arround QEA ====
-# Sun < Mon < Tue < Wed < Thu < Fri < Sat, c(0:6)
-Trdday <- read_delim(paste0(datdir, 'TRD_Cale.csv'), delim='\t', na = '',
-                     col_types = cols(Markettype = col_factor(c(1,2,4,8,16)),
-                                      Daywk = col_factor(c(0:6)),
-                                      Clddt = col_date(format = "%Y-%m-%d"),
-                                      State = col_factor(levels = c('C', 'O')))) %>% 
+# Setup trading day arround QEA ====
+trdday <- read_delim('TRD_Cale.csv', delim='\t', na = '',
+     col_types = cols(Markettype = col_factor(c(1,2,4,8,16,32)),
+          Clddt = col_date(format = "%Y-%m-%d"),
+          # c(0:6): Sun < Mon < Tue < Wed < Thu < Fri < Sat
+          Daywk = col_factor(c(0:6)),
+          # "Open" or "Closed", stock share were traded or not
+          State = col_factor(levels = c('C', 'O')))) %>% 
+    # trading date in China A-Share markets
+    filter(Markettype %in% as.character(c(1,4,16))) %>%  droplevels() %>% 
     rename('TradingDate' = Clddt) %>%
-    filter(State == c('O')) %>% # 'Open', going trading on that day
-    arrange(TradingDate) %>% 
-    split(., .$Markettype) %>% # generate the lists grouped by market class
-    lapply(subset, select = c(TradingDate), drop = TRUE) %>% 
-    `[`(c('1','4','16')) # select the stocks of Chinese A-Share markets
+    # columns by market class
+    spread(Markettype, State) %>% na.omit()
+# confirm the trade calendar is same among different kinds of share in China A-share market
+if(sum(all_equal(trdday$`1`, trdday$`4`),
+    all_equal(trdday$`1`, trdday$`16`),
+    all_equal(trdday$`4`, trdday$`16`)) == 3) {
+    # we take the trading dates of Shanghai A-share as China A-share market's
+    trdday %<>% filter(.$`1` == "O") %>% pull(TradingDate)
+} else print("Attention! The trading dates among China A-share markets are different.")
 
 
-# Input the list date of stocks
-AF_Co <- read_delim(paste0(datdir, 'AF_Co.csv'), delim='\t', na = '',
-                    col_types = cols(Stkcd = col_character(), 
-                                     Listdt = col_date('%Y-%m-%d'))) %>% 
-    select(c(Stkcd, Listdt))
-
-
-# Input the accounting data whitin quarterly financial report 
-# There is a defect that the stock's adjusted quarterly profits and earnings 
-# from CSMAR exsited too many inherent NaN, so we have to use the unadjusted
-# index to form the asset portfolios provided in Fama (1993).
-ReptInfo <- read_delim(paste0(datdir, 'IAR_Rept.csv'), delim='\t', na = '',
-                       col_types = cols(Stkcd = col_character(),
-                                        Sctcd = col_factor(levels = c(1, 2)),
-                                        Reptyp = col_factor(levels = c(1, 2, 3, 4)),
-                                        Accper = col_date(format = "%Y-%m-%d"),
-                                        Annodt = col_date(format = "%Y-%m-%d"),
-                                        Profita = col_double(),
-                                        Erana = col_double())) %>%
-    select(c(Stkcd,Sctcd,Reptyp,Accper,Annodt,Profita,Erana)) %>% 
-    # select the stocks of Chinese A-Share markets
-    filter(grepl('^[0-6]', Stkcd)) %>% 
+# Import the status data of quarterly financial report 
+ReptInfo <- read_delim('IAR_Rept.csv', delim='\t', na = '',
+       col_types = cols_only(Stkcd = col_character(),
+             # 1:4, first quarter, mid of year, third quarter, 
+             # and year earnings report
+             Reptyp = col_factor(levels = c(1:4)),
+             # the deadline of accounting cycle
+             Accper = col_date(format = "%Y-%m-%d"),
+             # the date when report was discolsed
+             Annodt = col_date(format = "%Y-%m-%d"),
+             # the day of week when report was discolsed
+             # c(0:6): Sun < Mon < Tue < Wed < Thu < Fri < Sat
+             Annowk = col_factor(levels = c(0:6)),
+             # net profits and earnings per share
+             Profita = col_double(), Erana = col_double())
+       ) %>% arrange(Stkcd, Accper) %>% 
+    # select the stocks which are belong to China A-Share markets,
+    # we could observe that the symbols of these stocks are begin with number c(0, 3, 6),
+    # so we use regular expression and string function 'grepl' to get them through function filter 
+    filter(grepl('^[0-6]', Stkcd)) %>% na.omit() %>% 
     arrange(Stkcd, Accper)
 
-save.image(paste0(datdir, 'PrePotfolReg', '.RData'))
+
+# Input the listing date and idustry of stocks 
+AF_Co <- read_delim('AF_Co.csv', delim='\t', na = '',
+        col_types = cols_only(Stkcd = col_character(),
+             # industry divide standard
+             IndClaCd = col_factor(),
+             # industry symbol
+             Indus = col_character(), 
+             # listed date
+             Listdt = col_date('%Y-%m-%d'))) %>% 
+    # just using the 2012 Edition Industry Classification
+    # published by China Securities Regulatory Commission 
+    filter(IndClaCd == 2) %>% select(-IndClaCd) 
+
+AF_Co %>% count(year = str_sub(.$Listdt, 1, 4), 
+            Industry = str_sub(.$Indus, 1, 1)) %>% 
+    ggplot() +
+    geom_col(aes(x = year, y = n, fill = Industry)) +
+    labs(x="Year", y = "The count of firms listed in this year") +
+    theme_bw()
+
+ggsave(glue("{datdir}/Stock-Indus-His.pdf"),
+       width = 16, height = 9, dpi = 300, units="in", limitsize = F) 
+
+trddat %<>% keep(names(.) %in% pull(AF_Co, Stkcd)) %>% 
+    lapply(inner_join, AF_Co, by = 'Stkcd') %>% 
+    lapply(arrange, TradingDate)
+
+# for convenience, wo store a image that contain all of above data
+glue('{datdir}/PrePotfol.RData') %>% save.image()
 
 
+######## Part II, reproduce Fama-French factor model by quarterly ########
 
-
-# set the quarter terms
-# notice that we need to set one quarter ahead
+# First, we set the quarter term.
+# At there, we setup a data pool composing with six year panel (24 quarter)
+# Notice that we should set one quarter ahead for structuring current invest portfolio
 Accprd <- months(seq(0, by=3, length=24)) %>% 
-    mapply('%m+%', ymd('2012-12-31'), .) %>% 
+    mapply('%m+%', ymd('2013-03-31'), .) %>% 
     as.Date(origin='1970-01-01') 
 
-# setup the saving list of results
-potfolstk <- vector('list', length = length(Accprd)) %>% `names<-`(Accprd)
-potfoldat <- vector('list', length = length(Accprd)) %>% `names<-`(Accprd)
-potfolreg <- vector('list', length = length(Accprd)) %>% `names<-`(Accprd)
+# create lists for storing our desired results
+potfolstk <- potfolreg <- vector(mode = 'list', length = length(Accprd)) %>% 
+    set_names(Accprd)
 
-# loop strat point
-for(q in 1:length(Accprd)) {
+for(q in 1:length(Accprd)) { # loop in quarter
     
-    # seeking the fundamental accounting status stocks ====
-    # in Chinese A-Share markets at quarter t-1 
+    print(Accprd[q])
     
-    # find the last trading date at the ending of quarter t-1 
-    # Mon < Tue < Wed < Thu < Fri < Sat < Sun, c(1:7)
-    ahdqua <- (Accprd[q] + days(1)) %m+% months(-3) + days(-1)
-    wday(ahdqua, label = TRUE, week_start = getOption("lubridate.week.start", 1))
-    splday <- lapply(Trdday, function(x) {while (!(ahdqua %in% x)) {
-        ahdqua <- ahdqua + days(-1)}
-        return(ahdqua)})
-    
-    # eliminate the outer stocks =====
-    
+    # seeking the fundamental accounting status of stocks ====
+    # at quarter t-2 to structure current quarter portfolio, 
+    # It is rational that investors make decision according to known recently report (quarter t-2)
+    splday <- ahdqua <- (Accprd[q] + days(1)) %m+% months(-6) + days(-1)
+    # c(1:7), Mon < Tue < Wed < Thu < Fri < Sat < Sun
+    wday(splday, label = TRUE, week_start = getOption("lubridate.week.start", 1))
+    # Note that we have confirmed that the trade dates in differents China A-share makets are same
+    while (!splday %in% trdday) splday <- splday + days(-1)
+        
+    # eliminate the outer stocks ====
     # eliminating the the stocks which listed less than six months
-    trddatl <- vector(mode="list", length = length(trddat)) %>% `names<-`(names(trddat))
-    for(i in 1:length(trddat)) {
-        trddatl[[i]] <- merge(trddat[[i]], AF_Co, by='Stkcd') %>% 
-            filter(interval(Listdt, splday[[i]]) >= months(6)) %>% 
-            arrange(Stkcd, TradingDate)
-    }
+    trddatl <- keep(trddat, ~ unique(pull(.x, Listdt)) %>% 
+                       interval(splday) %>% `>=`(months(6)))
+
+    # eliminating the the stocks which having less than 180 trading records in the past year
+    # or less than 15 trading records in the past month.
+    trddatl %<>% keep(~ '|'(filter(.x, TradingDate %within% interval(splday + years(-1), splday)) %>% 
+                            nrow() >= 180L, 
+                            filter(.x, TradingDate %within% interval(splday %m+% months(-1), splday)) %>% 
+                            nrow() >= 15L)
+                      )
     
-    # eliminating the the stocks which having less than 180 trading records
-    # in the past year or less than 15 trading records in the past month.
-    # generate the time series lists by stocks
-    trddatl <- lapply(trddatl, function(x) split(x, x$Stkcd)) 
-    for (i in 1:length(trddatl)) {
-        d <- vector(mode = 'integer')
-        for(k in 1:length(trddatl[[i]])) {
-            if('|'(trddatl[[i]][[k]] %>% 
-                   filter(TradingDate %within% interval(splday[[i]] + years(-1), splday[[i]])) %>% 
-                   nrow() <= 180L, 
-                   trddatl[[i]][[k]] %>% 
-                   filter(TradingDate %within% interval(splday[[i]] %m+% months(-1), splday[[i]])) %>% 
-                   nrow() <= 15L)) d <- c(d,k)
-        }
-        trddatl[[i]][d] <- NULL
-        trddatl[[i]] <- do.call(rbind.data.frame, trddatl[[i]])
-    }
+    # save the reserved stocks as quarterly sample for calculating the abnormal return
+    potfolstk[[q]] <- names(trddatl)
     
     
-    # Classification ====
-    
-    ### Ahead ###
+    # Fama-French three factor model (CH3) ====
     
     # Generate the calendar lists ====
-    trdlc <- lapply(trddatl, function(x) split(x, x$TradingDate))
+    trddatc <- bind_rows(trddatl) %>% split(.$TradingDate)
+    
+    
+    
+    
+    
+    
+    
     
     # the accounting status at the ending of quarter t-1
-    RepInf <- filter(ReptInfo, Accper == ahdqua) %>% 
+    RepInfo.q <- filter(ReptInfo, Accper == ahdqua) %>% 
+        # company equty
         mutate(CmnEqty = Profita / Erana) %>% 
-        select(Stkcd, Erana, CmnEqty)
-    
-    # extract the closing price of stocks at the ending of quarter t-1
-    # and calculate the accounting indicator, 'size' and value (EP)
-    potfol <- vector(mode="list", length = length(trdlc))
-    for (i in 1:length(splday)) {
-        names(potfol)[i] <- names(splday)[i]
-        potfol[[i]] <- trdlc[[i]] %>% `[[`(as.character(splday[[i]])) %>%  
-            select(Stkcd, TradingDate, Clsprc) %>% 
-            # notice that only the stocks that had published 
-            # quarter financial report within our sample
-            merge(RepInf, by='Stkcd') %>%  
-            mutate(Size = Clsprc * CmnEqty, # SMB
-                   Value = Erana / Clsprc) %>%  # VMG
-            `[`(complete.cases(.$Size & .$Value),)
-    } 
+        # the number of share = net profit / earnings per share (EPS), CSMAR
+        select(Stkcd, Erana, Accper, CmnEqty)
     
     
-    ####### The explanatory returns ########
+    ####### The explanatory variables, (mkt_rf, SMB,VMG) ########
     
-    # Notice that we could set two cluster paths, HML or VMG, at there.
+    # Notice that we could set two cluster paths, HML or VMG, at there 
+    # if we have sufficient accounting data
+    
+    # extract the closing price of stocks at the ending of quarter t-2 ====
+    # and get the group index bsaed on size and value
+    potfol <- pluck(trddatc, as.character(splday)) %>%
+        # select(Stkcd, TradingDate, Clsprc) %>% 
+        # notice that only the stocks, which published quarter financial report,
+        # are brought into our sample to structure portfolio, 
+        # it's also because of the limit of database
+        inner_join(RepInfo.q, by='Stkcd') %>%
+        mutate(# size, the number of shares product its closing price
+               Size = Clsprc * CmnEqty, 
+               # value, earnings-to-price
+               Value = Erana / Clsprc,
+               # add the accounting period 
+               Accprd = Accprd[q]) 
 
-    # we use the quantile of the indicators Size and Value to group the stocks
-    potfol1 <- do.call(rbind.data.frame, potfol) %>% `row.names<-`(NULL) %>% 
-        mutate('SMB' = cut(.$Size, quantile(.$Size, c(0, 0.5, 1)), labels=F)) %>% 
-        mutate('VMG' = cut(.$Value, quantile(.$Value, c(0, 0.3, 0.7, 1)), labels=F)) %>% 
-        `[`(complete.cases(.$SMB & .$VMG),)
+    # we use the quantile of the indicators Size and Value to group stocks
+    potfol1 <- mutate(potfol, 'g.SMB' = cut(Size, quantile(Size, c(0, 0.5, 1)), 
+                                            labels=c("Small", "Big"),
+                                            ordered_result = TRUE, include.lowest = TRUE)) %>% 
+            mutate('g.VMG' = cut(Value, quantile(Value, c(0, 0.3, 0.7, 1)), 
+                                 labels=c("Growth", "Middle", "Value"),
+                                 ordered_result = TRUE, include.lowest = TRUE))
+   
+    # re-level the group structure
+    potfol1$g.SMB %<>%  fct_relevel(c("Small", "Big"))
+    potfol1$g.VMG %<>%  fct_relevel(c("Value", "Middle", "Growth"))
     
-    
-    # structure the 2*3 portfolios ====
-    
-    # size effect 
-    sizeff <- c('small','big')
-    for(i in 1:length(sizeff)) {
-        assign(sizeff[i], subset(potfol1, SMB == i, select = c(Stkcd), drop = TRUE))}
-    
-    # value effect 
-    valueff <- c('value','middle','growth')
-    for(i in 1:length(valueff)) {
-        assign(valueff[i], subset(potfol1, VMG == i, select = c(Stkcd), drop = TRUE))}
-    
-    # make intersect of size and value portfolios
-    # and we will use them to calculate the Fama-French risk factors.
-    potfolff <- vector('list', length = length(sizeff)*length(valueff))
-    potfolname <- c('SV','SM','SG','BV','BM','BG'); k <- 0
-    for(i in 1:length(sizeff)){
-        for (u in 1:length(valueff)) {
-            k <- k+1
-            potfolff[k] <- list(intersect(get(sizeff[i]), get(valueff[u])))
-            names(potfolff)[k] <- potfolname[k]
-        }
-    }
-    
-    # save the portfolios
-    potfolstk[[q]] <- potfolff
-    
-    # calculate the daily risk factors at the quarter t+1 ====
-    
-    ### Behind ###
-    
-    # tidy the panel data at the quarter t-1
-    trdlff <- do.call(rbind.data.frame, trddatl) %>% # delete market type attributes
-        select(Stkcd, TradingDate, Dsmvtll, Dret, Nrrdaydt) %>% 
-        # extract the time series interval for the t-1 quarter
-        filter(TradingDate %within% 
-                   interval(Accprd[q]+days(1), (Accprd[q]+days(1))%m+%months(3)+days(-1))) %>% 
+    # calculate the daily risk factors at quarter t ====
+    trddatff <- bind_rows(trddatl) %>%  # unsplit stocks attributes
+        #select(Stkcd, TradingDate, Dsmvosd, Dretnd, Nrrdaydt) %>% 
+        # extract the time series interval for the t quarter
+        filter(TradingDate %within% interval((Accprd[q]+days(1))%m+%months(-3), Accprd[q])) %>% 
+        # merge with portfolio information
+        # Notice that this step will abandon the stocks which are not included in our sample
+        inner_join(select(potfol1, Stkcd, g.SMB, g.VMG), by = "Stkcd") %>% 
+        # lapply(filter, Stkcd %in% pull(potfol1, Stkcd)) %>% 
         # Generate the calendar ordered lists
-        split(., .$TradingDate) %>% 
-        # abandon the new listed stocks
-        lapply(filter, Stkcd %in% unlist(potfolff, use.names=FALSE))
+        split(.$TradingDate) 
+    
+    # mkt_rf ====
+    # the returns of market risk subtracted risk-free rate of that day
+    mkt_rf <- sapply(trddatff, function(x) {
+        # calculate the factor MKT
+        with(x, (Dsmvosd / sum(Dsmvosd)) %*% Dretnd) %>% 
+        # minus the risk-free rate of market 
+        '-'(unique(x$Nrrdaydt))}) 
     
     
-    # mkt_rf, the returns of factor MKT minus the risk-free rate ====
-    mkt_rf <- lapply(trdlff, function(x) {
-        '/'(x$Dsmvtll, sum(x$Dsmvtll)) %>% # obtain the daily weighted-value
-            '%*%'(x$Dret) %>% as.vector() %>% # calculate the index of the factor MKT
-            '-'(., unique(x$Nrrdaydt))}) # minus the risk-free rate of market 
+    # SMB and VMG  ====
+    # firstly, we calculate the group weighted returns of different portfolios
+    trddatg.Ret <- trddatff %>% lapply(group_by, g.SMB, g.VMG) %>% 
+        # mean daily returns of stocks within a group
+        lapply(summarise, Ret = mean(Dretnd)) %>% 
+        # # weighted by Dsmvosd
+        # lapply(summarise, Ret = Dretnd %*% (Dsmvosd /sum(Dsmvosd))) %>% 
+        bind_rows() 
+    # manually add a trading date column, maybe there exist a sequence bug...
+    trddatg.Ret %<>% add_column(TradingDate = rep(names(trddatff), each=2*3) %>% ymd())
+    
+    # data-visualization
+    figureFF <- multi_panel_figure(
+        width = 16, height = 18,
+        unit = "in",
+        columns = 1, rows = 2)
+    
+    FFSMB <- ggplot(trddatg.Ret) +
+        geom_line(aes(x=TradingDate, y=Ret, colour = g.SMB)) +
+        labs(title = "Portfolios structured in size (Capitalization)",
+             y="Daily return of portfolios Weighted by circulation market value") +
+        theme_bw() +
+        theme(plot.title = element_text(face = "bold"),
+              axis.title.x = element_blank(),
+              legend.position = c(0.05, 0.9),
+              legend.title = element_blank(),
+              legend.text = element_text(size = 14))
+    
+    FFVMG <- ggplot(trddatg.Ret) +
+        geom_line(aes(x=TradingDate, y=Ret, colour = g.VMG)) +
+        labs(title = "Portfolios structured in value (Earnings-to-price)",
+             y="Daily return of portfolios Weighted by circulation market value") +
+        theme_bw() +
+        theme(plot.title = element_text(face = "bold"),
+              axis.title.x = element_blank(),
+              legend.position = c(0.05, 0.9),
+              legend.title = element_blank(),
+              legend.text = element_text(size = 14))
+    
+    figureFF %<>% 
+        fill_panel(FFSMB, column = 1, row = 1) %<>%
+        fill_panel(FFVMG, column = 1, row = 2) %>% 
+        save_multi_panel_figure(glue("{datdir}/{Accprd[q]}_figure_portfolio_Retrun.pdf"),
+                                dpi = 300, limitsize = F)
+
+    # group-date to calculate the mean returns of portfolios, it's a magic!
+    trddatg.Ret %<>% group_by(TradingDate)
+    # then we take the mean between with portfolios
+    SMB <- `-`(filter(trddatg.Ret, g.SMB == "Small") %>% summarise(Ret = mean(Ret)) %>% pull(Ret),
+               filter(trddatg.Ret, g.SMB == "Big") %>% summarise(Ret = mean(Ret)) %>% pull(Ret)) %>% 
+        set_names(names(trddatff))
+    
+    VMG <- `-`(filter(trddatg.Ret, g.VMG == "Value") %>% summarise(Ret = mean(Ret)) %>% pull(Ret),
+               filter(trddatg.Ret, g.VMG == "Growth") %>% summarise(Ret = mean(Ret)) %>% pull(Ret)) %>% 
+        set_names(names(trddatff))
     
     
-    # form the 2*3 stock portfolios after filtering the stocks
-    trdlp <- lapply(trdlff, function(x) {
-        Pt <- vector('list', length = length(potfolff))
-        names(Pt) <- names(potfolff)
-        for (i in 1:length(Pt)) {Pt[[i]] <- filter(x, Stkcd %in% potfolff[[i]])} 
-        return(Pt)
-    }) 
+    ####### The dependent variable, weighted daily returns of 5*5 portfolios #####
     
-    # calculate the factors of SMB and VMG  ====
+    # structure the intersection 5*5 stock portfolios 
+    potfol2 <- mutate(potfol, 'g.SMB' = cut(Size, quantile(Size, seq(0, 1, by=0.2)), 
+                                            labels=c("Small", "2", "3", "4", "Big"),
+                                            ordered_result = TRUE, include.lowest = TRUE)) %>% 
+        mutate('g.VMG' = cut(Value, quantile(Value, seq(0, 1, by=0.2)), 
+                           labels=c("Growth", 2, 3, 4, "Value"),
+                           ordered_result = TRUE, include.lowest = TRUE)) %>% 
+        `[`(complete.cases(.$g.SMB, .$g.VMG),)
     
-    # measure the risk returns for portfolios by calendar
-    trdlpr <- lapply(trdlp, function(x) {
-        lapply(x, function(y) {
-            # weighted-value
-            weg <- subset(y, select=c(Dsmvtll), drop = TRUE) %>% '/'(., sum(.))
-            # weighted-value returns for portfolios
-            return(weg %*% subset(y, select=c(Dret), drop = TRUE) %>% 
-                       as.vector())})
-    })
+    # re-level the group structure
+    potfol1$g.SMB %<>%  fct_relevel(c("Small", "2", "3", "4", "Big"))
+    potfol1$g.VMG %<>%  fct_relevel(c("Value", "2", "3", "4", "Growth"))
+
+    # merge the group status with the trading data
+    trddatff <- bind_rows(trddatl) %>%  # unsplit stocks attributes
+        #select(Stkcd, TradingDate, Dsmvosd, Dretnd, Nrrdaydt) %>% 
+        # extract the time series interval for the t quarter
+        filter(TradingDate %within% interval((Accprd[q]+days(1))%m+%months(-3), Accprd[q])) %>% 
+        # merge with portfolio information
+        # Notice that this step will abandon the stocks which are not included in our sample
+        inner_join(select(potfol2, Stkcd, g.SMB, g.VMG), by = "Stkcd") %>% 
+        # lapply(filter, Stkcd %in% pull(potfol1, Stkcd)) %>% 
+        # Generate the calendar ordered lists
+        split(.$TradingDate) 
     
-    
-    SMB <- lapply(trdlpr, function(x){
-        1/3 * ('-'(do.call(sum, x[c('SV','SM','SG')]), 
-                   do.call(sum, x[c('BV','BM','BG')]))) 
-    })
-    
-    VMG <- lapply(trdlpr, function(x){
-        1/2 * ('-'(do.call(sum, x[c('SV','BV')]), 
-                   do.call(sum, x[c('SG','BG')]))) 
-    })
-    
-    
-    
-    ####### The dependent returns of 5*5 stock portfolios #########
-    
-    # group by accouting indicator, Size and Value
-    potfol2 <- do.call(rbind.data.frame, potfol) %>% `row.names<-`(NULL) %>% 
-        mutate('SMB' = cut(.$Size, 
-                           quantile(.$Size, seq(0,1,by=0.2)), labels=F)) %>% 
-        mutate('VMG' = cut(.$Value, 
-                           quantile(.$Value, seq(0,1,by=0.2)), labels=F)) %>% 
-        `[`(complete.cases(.$SMB & .$VMG),)
-    
-    # form the intersection 5*5 stock portfolios 
-    sizeP5 <- c('size1','size2','size3','size4','size5')
-    for(i in 1:length(sizeP5)) {
-        assign(sizeP5[i], subset(potfol2, SMB == i, select = c(Stkcd), drop = TRUE))}
-    
-    valueP5 <- c('value1','value2','value3','value4','value5')
-    for(i in 1:length(valueP5)) {
-        assign(valueP5[i], subset(potfol2, VMG == i, select = c(Stkcd), drop = TRUE))}
-    
-    potfol25 <- vector('list', length = length(sizeP5)*length(valueP5)); k <- 0
-    for(i in 1:length(sizeP5)){
-        for (u in 1:length(valueP5)) {
-            k <- k+1
-            potfol25[k] <- list(intersect(get(sizeP5[i]), get(valueP5[u])))
-            names(potfol25)[k] <- paste0('sz', i, 'vl', u)
-        }
-    }
-    
-    # form the 5*5 stock portfolios after filtering the stocks
-    trdlp25 <- lapply(trdlff, function(x) {
-        Pt <- vector('list', length = length(potfol25))
-        names(Pt) <- names(potfol25)
-        for (i in 1:length(Pt)) {Pt[[i]] <- filter(x, Stkcd %in% potfol25[[i]])} 
-        return(Pt)
-    }) 
-    
-    trdlpr25 <- lapply(trdlp25, function(x) {
-        lapply(x, function(y) {
-            # weighted-value
-            subset(y, select=c(Dsmvtll), drop = TRUE) %>% '/'(., sum(.)) %>% 
-                # weighted-value returns for portfolios
-                '%*%' (subset(y, select=c(Dret), drop = TRUE)) %>% as.vector()})}) %>% 
-        do.call(rbind.data.frame, .) %>% # get the time series returns of 25 stock portfolios
-        mutate(TradingDate = as.Date(rownames(.))) %T>% print() %>%  
-        `[`(, c(ncol(.), 1:25))
+    # caluculate the daily returns of portfolios weighted by circulation market value
+    trddatg.Ret <- lapply(trddatff, group_by, g.SMB, g.VMG) %>% 
+        lapply(summarise, Ret = mean(Dretnd)) %>% 
+        # # weighted by Dsmvosd
+        # lapply(summarise, Ret = Dretnd %*% (Dsmvosd /sum(Dsmvosd))) %>% 
+        bind_rows()
+    # manually add a trading date column, maybe there exist a sequence bug...
+    trddatg.Ret %<>% add_column(TradingDate = rep(names(trddatff), each=5*5) %>% ymd())
     
     # retain the daily regression data
-    potfoldat[[q]] <- cbind(trdlpr25, 
-                            'mkt_rf'=unlist(mkt_rf), 'SMB'=unlist(SMB), 'VMG'=unlist(VMG)) %>% 
-        merge(Rf, by='TradingDate')
+    trddatqg <- tibble("TradingDate" = names(trddatff) %>% ymd(),
+           'mkt_rf' = mkt_rf,
+           'SMB' = SMB,
+           'VMG' = VMG) %>% 
+        inner_join(trddatg.Ret, by = "TradingDate") %>% 
+        inner_join(Nrrate, by = "TradingDate")
     
     
-    ############## Regression ##################
+    ############## Regression (quarterly) ############
     
+    # Fama-French multiple-factor model
+    mod_lm <- function(df) lm( I(Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG, data = df)
     # run time series regression by portfolios
-    potfollm <- vector('list', length = length(potfol25))
-    names(potfollm) <- names(potfol25)
-    for (i in 1:length(potfol25)) {
-        potfollm[[i]] <- eval(substitute(lm( I(variable - Nrrdaydt) ~ 
-                                                 mkt_rf + SMB + VMG, data = potfoldat[[q]]),
-                                         list(variable = as.name(names(potfol25)[i]))))
-    }
+    potfollm <- group_nest(trddatqg, g.SMB, g.VMG) %>%
+        mutate(model = map(data, mod_lm))
     
+    # coefficients of regression results ====   
+    potfollm %<>% mutate(Coef = map(model, tidy))
+
     # save the regression results
     potfolreg[[q]] <- potfollm
     
 }
 
-save(potfolstk, potfoldat, potfolreg, file = 'HuCH3.RData')
-
-
-######### coefficients of regression results #########
-
-varname <- c('(Intercept)', 'mkt_rf', 'SMB', 'VMG')
-staname <- c('Estimate', 't value')
-potfolreg.est <- lapply(potfolreg, function(x) {
-    lapply(x, function(y) coef(summary(y)) %>% as.data.frame()%>% 
-               `[`(varname, staname))
-})
-
+save(potfolstk, potfolreg, file = glue("{datdir}/Hu-CH3.RData"))

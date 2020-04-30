@@ -1,166 +1,274 @@
+library(magrittr)
 library(tidyverse)
 library(lubridate)
 
+library(broom)
+library(glue)
+
+
+# function to export figure according to type term 
+mod_figure <- function(y, h, z) { 
+    # y = file name, z = figure size, h = figure ratio
+    if(h == 1L){ # 9/16 ration
+        paste(Accprd, Pretype, Markettype, Modeltype, grpnum, "Figure", y, sep='_') %>%
+            paste0(datdir, "/", ., '.pdf') %>% 
+            ggsave(width = 9*z, height = 9*z, dpi = 300, units="in", limitsize = F)
+    } else if(h == 2L){
+        paste(Accprd, Pretype, Markettype, Modeltype, grpnum, "Figure", y, sep='_') %>%
+            paste0(datdir, "/", ., '.pdf') %>% 
+            ggsave(width = 8*z, height = 6*z, dpi = 300, units="in", limitsize = F)
+    } else if(h == 3L){
+        paste(Accprd, Pretype, Markettype, Modeltype, grpnum, "Figure", y, sep='_') %>%
+            paste0(datdir, "/", ., '.pdf') %>% 
+            ggsave(width = 16*z, height = 9*z, dpi = 300, units="in", limitsize = F)
+    } else {print("Please customize the image output process!")}
+}
+
+
+
+setwd('~/OneDrive/Data.backup/QEAData/CH3/2017/')
 # Specifying trem information
 Accprd <- as.Date('2017-09-30')
 Pretype <- '6'
-Markettype <- '5'
-weekterm <- 'wekbind'
-modeltype <- 'FF3'
-datadir <- '~/NutSync/MyData/QEAData/'
+Markettype <- '21'
+Modeltype <- 'CH3'
+grpnum <- 2L
 
+datdir <- file.path(getwd(), Accprd)
 
 # Input trading data with FF factors from event window
-stkeve <- paste(Accprd, Pretype, Markettype, weekterm, sep='_') %>% 
-    paste0('.*?eve_TradStat[.]csv$') %>% 
-    dir(datadir, pattern = .) %>% 
-    paste0(datadir, .) %>% 
-    read_delim(delim=',', na = '')
+stkeve <- paste(Accprd, Pretype, Markettype, "stkeve", sep='_') %>% 
+    paste0(getwd(), "/", ., ".csv") %>%
+    read_delim(delim = ',', na = '', # for comma
+           col_types = cols(.default = col_double(),
+                    Stkcd = col_character(),
+                    TradingDate = col_date(format = "%Y-%m-%d"),
+                    Accper = col_date(format = "%Y-%m-%d"),
+                    Listdt = col_date(format = "%Y-%m-%d"),
+                    Annodt = col_date(format = "%Y-%m-%d"),
+                    Markettype = col_factor(levels = c(1,4,16)),
+                    Indus = col_factor(),
+                    Annowk = col_factor())) %>% split(.$Stkcd)
 
 
-T <- 81L
-N <- nrow(stkeve)/T
-Quittime <- 20L # we abandon somes event window for the beauty of data visualization
-timeline <- c(-20:+40) # just the order of tau, 
-# the number of day that before or after the earnings announcement day
+stkcd <- read_csv("2017-09-30/2017-09-30_6_21_stkcd_sam.csv") %>% pull(1L)
+stkeve %<>% `[`(stkcd) 
+    
+# the number of stocks in our sample this quarter
+N <- length(stkeve)
+# the length of estimate window
+T <- nrow(stkeve[[N]])
+stkcd <- names(stkeve)
+# the timeline of event window
+# Note that we could abandon a part of event window for the beauty of CAR path
+timeline <- (-(T-1L)/2):((T-1L)/2)
 
-minsrow <- c()
-for (i in 1:N) {
-    subrow <- seq(1, Quittime) + (i-1)*T
-    minsrow <- c(minsrow, subrow)
-}
-stkeve <- stkeve[-minsrow,]
-Stkcd_sub <- unique(stkeve$Stkcd) # symbols of selected stocks
-rm(subrow, minsrow)
 
 # Input the aggregate trading data form CSMAR
-
-TRD_Dalyr <- read_delim("~/NutSync/MyData/QEAData/TRD_Dalyr.txt", "\t", 
-                        escape_double = FALSE, trim_ws = TRUE,
-                        col_types = cols(
-                        Adjprcnd = col_skip(), Adjprcwd = col_skip(), 
-                        Capchgdt = col_skip(), Clsprc = col_number(), 
-                        Dnshrtrd = col_number(), 
-                        Dnvaltrd = col_number(), Dretnd = col_skip(), 
-                        Dretwd = col_skip(), Dsmvosd = col_number(), 
-                        Dsmvtll = col_number(), Hiprc = col_number(), 
-                        Loprc = col_number(), Markettype = col_integer(), 
-                        Opnprc = col_number(), Stkcd = col_character(), 
-                        Trddt = col_date(format = "%Y-%m-%d"), 
-                        Trdsta = col_integer())) %>% 
-            rename('TradingDate' = Trddt)
-
-TRD_Dalyr_sub <- TRD_Dalyr[-c(1,2), ] %>% 
-             subset(Stkcd %in% Stkcd_sub) %>% 
-             subset(TradingDate %within% interval(Accprd %m+% months(-6), Accprd %m+% months(+6)))
-
-
-# calculate the amplitude of stocks on trading day
-
-TRD_sam <- data.frame()    
-for (i in Stkcd_sub) {
-    TRD_sim <- TRD_Dalyr_sub %>% as_tibble() %>%
-        subset(Stkcd == i) %>% 
-        mutate(amplitude = c(NaN, (Hiprc - Loprc)[-1] / Clsprc[-length(Clsprc)]))
-    TRD_sam <- rbind(TRD_sam, TRD_sim)
-}
-TRD_Dalyr_sub <- TRD_sam; rm(TRD_sam, TRD_sim)
+TRD_Dalyr <- read_delim("~/OneDrive/Data.backup/QEAData/TRD_Dalyr_CSMAR.txt", "\t", 
+        escape_double = FALSE, trim_ws = TRUE,
+        col_types = cols(.default = col_double(), 
+                # stocks symbol, for tidy convenience 
+                # we set it's data class as factor (category)
+                Stkcd = col_character(),
+                # trading date
+                Trddt = col_date(format = '%Y-%m-%d'),
+                Dretwd = col_skip(), Adjprcwd = col_skip(), Adjprcnd = col_skip(),
+                # 1=SH-A, 2=SH-B, 4=SZ-A, 8=SZ-B, 16=startup, 32=Tech
+                Markettype = col_factor(levels = c(1,2,4,8,16,32)), 
+                # trading status and the late date of its capitalization changed
+                Trdsta = col_factor(levels = c(1:16)), Capchgdt = col_skip())) %>% 
+    # only the category of 1 indicate that stocks were traded normally 
+    filter(Trdsta == "1") %>% select(-Trdsta) %>%  
+    # focus on Chinese A-Share markets
+    filter(Markettype %in% as.character(c(1, 4, 16))) %>% droplevels() %>%  
+    # rename the column of trading date
+    rename("TradingDate" = Trddt) %>% 
+    # Select a specific time period
+    subset(TradingDate %within% interval(Accprd %m+% months(-6), Accprd %m+% months(+6))) %>% 
+    # sorting by stock and trading date
+    arrange(Markettype, Stkcd, TradingDate) %>%   
+    #  generate the time series lists sort by stocks.
+    split(.$Stkcd) %>% 
+    # subset the stocks in our quarterly sample
+    `[`(stkcd) %>% 
+    # calculate the amplitude of stocks on trading day
+    lapply(mutate, amplitude = c(NaN, (Hiprc - Loprc)[-1] / Clsprc[-length(Clsprc)]))
 
 
-# Input the transaction derivative index
+# Import the transaction derivative index
+STK_MKT_Dalyr <- read_delim("~/OneDrive/Data.backup/QEAData/STK_MKT_Dalyr_CSMAR.txt", 
+    "\t", escape_double = FALSE, trim_ws = TRUE,
+    col_types = cols_only(
+         Symbol = col_character(), 
+         TradingDate = col_date(format = "%Y-%m-%d"), 
+         ChangeRatio = col_double(), Turnover = col_double(),
+         Liquidility = col_double(), 
+         CirculatedMarketValue = col_double(),
+         PE = col_double(), PB = col_double(),
+         PS = col_double())) %>% 
+    rename('Stkcd' = Symbol) %>% 
+    subset(TradingDate %within% interval(Accprd%m+%months(-6), Accprd%m+%months(+6))) %>% 
+    split(.$Stkcd) %>% `[`(stkcd) 
 
-STK_MKT_Dalyr <- read_delim("~/NutSync/MyData/QEAData/STK_MKT_Dalyr.txt", 
-                            "\t", escape_double = FALSE, trim_ws = TRUE,
-                            col_types = cols(Amount = col_skip(), Symbol = col_character(),
-                                             ChangeRatio = col_skip(), 
-                                             CirculatedMarketValue = col_skip(), 
-                                             Liquidility = col_number(), PB = col_number(), 
-                                             PCF = col_skip(), PE = col_number(), 
-                                             PS = col_number(), Ret = col_number(), 
-                                             SecurityID = col_skip(), ShortName = col_skip(), 
-                                             TradingDate = col_date(format = "%Y-%m-%d"), 
-                                             Turnover = col_number())) %>% 
-                rename('Stkcd' = Symbol)
-
-STK_MKT_Dalyr_sub <- STK_MKT_Dalyr[-c(1,2), ] %>% 
-    subset(Stkcd %in% Stkcd_sub) %>% 
-    subset(TradingDate %within% interval(Accprd %m+% months(-6), Accprd %m+% months(+6)))
-
+# import the data of abnormal return
+setwd(datdir)
+QEA_gAR <- paste(Accprd, Pretype, Markettype, Modeltype, grpnum, sep='_') %>% 
+    paste0('.*?AR[.]csv$') %>% 
+    dir(pattern = .) %>% paste0(getwd(), "/", .) %>% 
+    read_delim(delim=',', na = '',
+               col_types = cols(Stkcd = col_character(),
+                       TradingDate = col_date(format = "%Y-%m-%d"),
+                       g.PLS = col_factor(levels = c(1:grpnum)),
+                       #g.PLS = col_factor(levels = c(1,2,3)),
+                       AbRet = col_double())) %>% 
+    split(.$Stkcd) %>% 
+    lapply(add_column, "timeline" = factor(timeline, ordered = TRUE))
 
 # merge above three parts of data
-TRD_reg <- merge(stkeve, TRD_Dalyr_sub, by = c("Stkcd", "TradingDate")) %>% 
-            merge(STK_MKT_Dalyr_sub, by = c("Stkcd", "TradingDate"))
-
-
-
-# bind colums of abnormal returns and group information with above trading status (TRD_reg)
-ARcd <- paste(Accprd, Pretype, Markettype, weekterm, modeltype, 'group', sep='_') %>% 
-        paste0('.*?AR[.]csv$') %>% 
-        dir(datadir, pattern = .) %>% 
-        paste0(datadir, .)
-
-
-for (i in 1:length(ARcd)) {
-   assign(paste0('stkabr', '_g', i), read_delim(ARcd[i], delim=',', na = ''))
-   stkabrgp <- get(paste0('stkabr', '_g', i))
-   assign(paste0('TRD', '_reg','_g', i), subset(TRD_reg, Stkcd %in% colnames(stkabrgp)))
-   TRD_reg_gp <- get(paste0('TRD', '_reg','_g', i))
-   
-   TRD_lm <- data.frame()
-   for (z in colnames(stkabrgp)[-1]) {
-       TRD_abr <- cbind(subset(TRD_reg_gp, Stkcd == z),
-                        stkabrgp[, colnames(stkabrgp) == z], 
-                        'group' = c(i))
-       if (z == unique(TRD_abr$Stkcd)) {
-          colnames(TRD_abr)[ncol(TRD_abr)-1] <- 'abnormalreturn' 
-          TRD_lm <- rbind(TRD_lm, TRD_abr)
-       } else cat('exsit matching error for stock', z)
-   }
-   assign(paste0('TRD', '_reg', '_g', i), TRD_lm)
-}
-
-TRD_reg <- mget(ls(pattern = '^TRD_reg_g[0-9]$'))
-rm(stkabrgp, TRD_reg_gp, TRD_abr,TRD_lm)
+STK_reg <- map2(stkeve, TRD_Dalyr, left_join) %>% 
+    map2(STK_MKT_Dalyr, left_join, by = c("Stkcd", "TradingDate")) %>% 
+    lapply(add_column, "timeline" = factor(timeline, ordered = TRUE)) %>% 
+    `[`(stkcd) %>% # join using map2 function, Notice that the order of 
+    # stocks in two lists, otherwise the join process will appear False 
+    map2(QEA_gAR[stkcd], left_join) %>% bind_rows()
 
 
 # Standard deviation of group stock's daily returns everyday (event window)
-TRD_Dret_sd <- c()
-for (i in 1:length(ARcd)) {
-    TRD_reg_ana <- get(ls(pattern = '^TRD_reg_g[0-9]$')[i])
-    stkabr_ana <- get(ls(pattern = '^stkabr_g[0-9]$')[i])
-    TRD_Dret_sdc <- c()
-    for (z in 1:nrow(stkabr_ana)) {
-        sd_nrow <- seq(z, nrow(stkabr_ana)*(ncol(stkabr_ana)-1), nrow(stkabr_ana))
-        TRD_Dretsd <- sd(TRD_reg_ana$Dretwd[sd_nrow])
-        TRD_Dret_sdc <- c(TRD_Dret_sdc, TRD_Dretsd)
-    }
-    TRD_Dret_sd <- cbind(TRD_Dret_sd, TRD_Dret_sdc)
-}
-colnames(TRD_Dret_sd) <- ls(pattern = '^stkabr_g[0-9]$')
-rm(stkabr_ana, TRD_reg_ana, sd_nrow, TRD_Dretsd, TRD_Dret_sdc, sd_nrow)
+QEA_Dret_sd <- group_by(STK_reg, g.PLS, timeline) %>% 
+    summarise("Dretmrf_sd" = sd(Dret_rf)) #%>% spread(g.PLS, Dretmrf_sd)
+QEA_Dret_sd$timeline %<>% as.character() %>% as.integer()
+ggplot(QEA_Dret_sd, aes(x=timeline, y=Dretmrf_sd, colour=g.PLS)) +
+    geom_path() + geom_point(aes(shape = g.PLS), size = 2) +
+    scale_color_manual(values = c("#377EB8", "#E41A1C")) +
+    scale_x_continuous(breaks=seq(-30, 30, by = 5), labels = seq(-30, 30, by=5)) + 
+    labs(x = "Time line", y = 'standard deviation of stock\'s real daily return') + 
+    theme_bw() +
+    theme(plot.title = element_text(size=14),
+          axis.ticks.x = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.title.x = element_text(),
+          axis.title.y = element_text(face = "italic"),
+          legend.title = element_blank(),
+          legend.position = c(0.1, 0.9),
+          legend.text = element_text(size=12))
 
+mod_figure("Dret_sd", 3L, 1.2)
 
-plot(TRD_Dret_sd[,1])
-plot(TRD_Dret_sd[,2], col='red')
-
-
+QEA_gAR_sd <- group_by(STK_reg, g.PLS, timeline) %>% 
+    summarise("AR_sd" = sd(AbRet)) #%>% spread(g.PLS, AR_sd)
+QEA_gAR_sd$timeline %<>% as.character() %>% as.integer()
+ggplot(data=QEA_gAR_sd, aes(x=timeline, y=AR_sd, colour = g.PLS)) +
+    geom_path() + geom_point(aes(shape = g.PLS), size = 2) +
+    scale_color_manual(values = c("#377EB8", "#E41A1C")) +
+    scale_x_continuous(breaks=seq(-30, 30, by = 5), labels = seq(-30, 30, by=5)) + 
+    labs(x = "Time line", y = 'standard deviation of stock\'s daily abnormal return in event window') + 
+    theme_bw() +
+    theme(plot.title = element_text(size=14),
+          axis.ticks.x = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.title.x = element_text(),
+          axis.title.y = element_text(face = "italic"),
+          legend.title = element_blank(),
+          legend.position = c(0.1, 0.9),
+          legend.text = element_text(size=12))
 
 # Statistical properties
-summary(TRD_reg_g1$Dretwd)
-summary(TRD_reg_g2$Dretwd)
-
-
 
 # Regression
-summary(lm(abnormalreturn ~ Liquidility, data = TRD_reg[[1]]))
-summary(lm(abnormalreturn ~ Liquidility, data = TRD_reg[[2]]))
-summary(lm(abnormalreturn ~ Liquidility, data = rbind()))
+library(stargazer)
 
-summary(lm(abnormalreturn ~ Turnover+amplitude+Liquidility, 
-           data = TRD_reg[[1]]))
-summary(lm(abnormalreturn ~ Turnover+amplitude+Liquidility, 
-           data = TRD_reg[[2]]))
-summary(lm(abnormalreturn ~ Turnover+amplitude+Liquidility, 
-           data = rbind()))
+### Time series ======
+
+# trading ====
+## unclassified
+summary(lm(AbRet ~ amplitude + Turnover + Dnshrtrd + Dsmvosd + Liquidility, data = STK_reg))
+## PLS
+STK_reg %>% split(.$g.PLS) %>%
+    map(~ lm(AbRet ~ amplitude + Turnover + Dnshrtrd + Dsmvosd + Liquidility, data = .x)) %>% 
+    stargazer(align = TRUE, type = "text", keep.stat = c("n", "rsq"))
+
+lm(AbRet ~ (amplitude + Turnover + Dnshrtrd + Dsmvosd + Liquidility)*g.PLS, data = STK_reg) %>% 
+    stargazer(align = TRUE, type = "text", keep.stat = c("n", "rsq"))
+
+## group-stkcd
+# data frame
+trd_lm <- function(df) lm(AbRet ~ amplitude + Turnover + Dnshrtrd + Dsmvosd + Liquidility, data = df)
+ts_trdreg <- group_nest(STK_reg, g.PLS, Stkcd) %>% 
+    transmute(g.PLS, Stkcd, "trd_tslm" = map(data, ~ trd_lm(.x) %>% tidy())) %>% 
+    unnest(cols = c(trd_tslm))
+# table
+STK_reg %>% split(.$g.PLS) %>% 
+    lapply(function(x) { split(x, x$Stkcd) %>% 
+        lapply(trd_lm)}) %>% 
+            lapply(sample, 5) %>% 
+                stargazer(align = TRUE, type = "text", keep.stat = c("n", "rsq"))
 
 
+
+# factor =====
+datdir <- '~/OneDrive/Data.backup/QEAData/'
+# Import the accounting data within quarterly financial report 
+ReptInfo <- read_delim(paste0(datdir, 'IAR_Rept.csv'), delim='\t', na = '',
+                   col_types = cols_only(Stkcd = col_character(),
+                             # the deadline of accounting cycle
+                             Accper = col_date(format = "%Y-%m-%d"),
+                             # the date when report was discolsed
+                             Annodt = col_date(format = "%Y-%m-%d"),
+                             # net profits and earnings per share
+                             Profita = col_double(), Erana = col_double())) %>% 
+    filter(Stkcd %in% stkcd & Accper == Accprd) %>% arrange(Stkcd) %>%
+    mutate('g.UMD' = factor(cut(.$Erana, quantile(.$Erana, c(0, 0.3, 0.7, 1)), labels=F), 
+                            levels = c(1,2,3), ordered = T)) %>% 
+    # there is a pity! when we use cut function to structure the category variable,
+    # several stocks will be droped, and we get NA
+    na.omit()
+
+# merge the trading data, transaction derivative index, 
+# CH3 factors, PLS result, AR, with report information
+STK_reg %<>% inner_join(ReptInfo) %>% arrange(Stkcd, timeline)
+# structure the factor UMD
+group_by(STK_reg, g.UMD, timeline) %>% summarise("avgUMD" = mean(Dretnd)) %>% 
+    ggplot(aes(x=as.integer(timeline), y=avgUMD, colour=g.UMD)) +
+    geom_path() +
+    scale_color_brewer(palette = "Dark2")
+    
+UMD <- group_by(STK_reg, g.UMD, timeline) %>% summarise("avgUMD" = mean(Dretnd)) %>% 
+    spread(g.UMD, avgUMD)
+# doing the substract between with portfolios
+UMD <- tibble("timeline" = factor(timeline, ordered = TRUE), "UMD" = UMD$`3` - UMD$`1`)
+# merge with regression data
+STK_reg %<>% inner_join(UMD) %>% na.omit()
+
+## PLS
+STK_reg %>% split(.$g.PLS) %>%
+    map(~ lm(AbRet ~ UMD, data = .x)) %>% 
+    stargazer(align = TRUE, type = "text", keep.stat = c("n", "rsq"))
+
+lm(AbRet ~ UMD*g.PLS, data = STK_reg) %>% 
+    stargazer(align = TRUE, type = "text", keep.stat = c("n", "rsq"))
+
+## group-stkcd
+### data frame
+ff_lm <- function(df) lm(AbRet ~ UMD, data = df)
+ts_ffreg <- group_nest(STK_reg, g.PLS, Stkcd) %>% 
+    transmute(g.PLS, Stkcd, "ff_tslm" = map(data, ~ ff_lm(.x) %>% tidy())) %>% 
+    unnest(cols = c(ff_tslm))
+### table
+STK_reg %>% split(.$g.PLS) %>% 
+    lapply(function(x) { split(x, x$Stkcd) %>% 
+        lapply(ff_lm)}) %>% 
+            lapply(sample, 5) %>% 
+                stargazer(align = TRUE, type = "text", keep.stat = c("n", "rsq"))
+
+
+# cross-section
+STK_csreg <- group_nest(STK_reg, g.PLS, timeline) 
+cs_trdreg <- transmute(STK_csreg, g.PLS, timeline, "trd_cslm" = map(data, ~ trd_lm(.x) %>% tidy())) %>% 
+    unnest(cols = c(trd_cslm)) %>% print()
+
+cs_trdreg %>% gather(statistics, estimator, estimate, statistic) %>% 
+ggplot(aes(x=as.integer(timeline), y=estimator, colour = g.PLS)) +
+    geom_path() +
+    facet_grid(statistics~term)
+   
