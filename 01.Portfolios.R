@@ -434,9 +434,8 @@ for (q in 1:length(Accprd)) { # loop in quarter
                     group_by(TradingDate) %>% nest() %>%  
                     # caluculate the daily returns of portfolios 
                     # weighted by circulation market value
-                    mutate("data" = map(data, group_by, g.SMB, g.VMG)) %>% 
                     transmute("p.Ret" = map(data, 
-                            ~ summarise(.x, "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)))
+  ~ summarise(group_by(.x, g.SMB, g.VMG), "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)))
                             )) %>% 
                     unnest(cols = "p.Ret")
             

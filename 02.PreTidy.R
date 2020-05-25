@@ -242,8 +242,9 @@ for (q in 1:length(Accprd)) {
             # export the simple codes of stocks in sample from current quarter report
             glue("{datdir}/{subAccprd}_{Pretype}_{M}_stkcd.csv") %>%
                 write.csv(stkcd, file = ., quote = F, row.names = F)
-            # # export the whole trading data of stocks in sample from current quarter report 
-            # glue("{datdir}{subAccprd}_{Pretype}_{M}_stktrd.csv") %>%
+            # # export the whole trading data of stocks in sample from current quarter report
+            # # for calculating the factors to explanate abnormal return
+            # glue("{datdir}/{subAccprd}_{Pretype}_{M}_stktrd.csv") %>%
             #     write.csv(stktrd, file=., quote=F, row.names = F)
     } else glue("{Accprd[q]}, Terrible! The time period of whole window exist errors!") %>% print()
     
