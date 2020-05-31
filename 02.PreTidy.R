@@ -121,7 +121,7 @@ ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', delim = '\t', na = '',
                  )
          ) 
 # Attention! There are some problems.
-ReptInfo %<>% `[`(-problems(.)$row, ) %>% 
+ReptInfo %<>% `[`(-unique(problems(.)$row), ) %>% 
         arrange(Stkcd, Accper) %>% 
         # select the stocks which are belong to China A-Share markets,
         # we could observe that the symbols of these stocks are begin with number c(0, 3, 6),

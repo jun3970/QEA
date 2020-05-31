@@ -63,7 +63,7 @@ ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', delim = '\t', na = '',
         filter(grepl('^[0-6]', Stkcd)) 
 
 # Attention! there has some problem observations, we choose to delete them
-if (nrow(problems(ReptInfo)) >= 0L)  ReptInfo %<>% `[`(-problems(.)$row, ) 
+if (nrow(problems(ReptInfo)) >= 0L)  ReptInfo %<>% `[`(-unique(problems(.)$row), ) 
 
 
 # assign basical parameter =====
