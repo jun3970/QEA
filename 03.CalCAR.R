@@ -1,19 +1,25 @@
+# This script is mainly written for calculate the abnormal returns 
+# and visualizing some key features about firms attribute and accounting indicator 
+
 library(tidyverse)
 library(magrittr)
 library(lubridate)
 
+library(modelr)
 library(glue)
 library(broom)
+
 library(multipanelfigure)
 library(RColorBrewer)
 display.brewer.all()
 library(ggthemes)
 
-###### Part I, import data and assign paremeter ####### 
-setwd('~/OneDrive/Data.backup/QEAData/')
+# Part I, import data and assign parameter -------------------------------
 source('~/R/QEA/QEA.R/function_QEA.R')
 
-# the listing date and idustry infromation of stocks 
+setwd('~/OneDrive/Data.backup/QEAData/')
+
+# the listing date and industry information of stocks 
 AF_Co <- read_delim('AF_Co.csv', delim = '\t', na = '',
         col_types = cols_only(Stkcd = col_character(),
             IndClaCd = col_factor(),  # industry category
@@ -66,11 +72,8 @@ ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', delim = '\t', na = '',
 if (nrow(problems(ReptInfo)) >= 0L)  ReptInfo %<>% `[`(-unique(problems(.)$row), ) 
 
 
-# assign basical parameter =====
-
-# focus on a specific quarter 
-Accprd <- ymd('2017-09-30')
-# specify the parameters of type property
+# assign basic parameters about quarter and sample attributes
+Accprd <- ymd('2017-09-30')  # focus on a specific quarter 
 Pretype <- 6L
 Markettype <- 21L
 # set working directory
@@ -102,10 +105,11 @@ if (is.numeric(subsam)) {
 N <- length(stkeve)
 # the time series period of event window
 TS <- nrow(stkeve[[N]])
-# the timeline of event window
+# the time line of event window
 timeline <- (-(TS - 1L) / 2):((TS - 1L) / 2)
 
-########## classo (zhan gao)#########
+
+# classo (zhan gao) -------------------------------------------------------
 
 # library(classo)
 # library(Rmosek)
@@ -119,7 +123,7 @@ timeline <- (-(TS - 1L) / 2):((TS - 1L) / 2)
 # pls_out <- PLS.cvxr(N, winlen, Ret, CH3, K = K_num, lambda = lambda)
 
 
-########## Part II, Read the result from MATLAB, PLS(su, 2016) #########
+# Part II, Read the result from MATLAB, PLS(su, 2016) ---------------------
 
 # Group information
 PLSclus <- '~/OneDrive/Data.backup/QEAData/Matlab_PLS' %>% 
@@ -129,8 +133,7 @@ PLSclus <- '~/OneDrive/Data.backup/QEAData/Matlab_PLS' %>%
 
 # the number of groups by PLS (su, 2016)
 grp_num <- PLSclus$g_PLS %>% levels() %>% length()
-# relevel the prder of group levels
-# This arrange process is very important!
+# re-level the order of group levels, this process is very important!
 # without it, the order of groups in plot will be incorrect.
 PLSclus$g_PLS %<>% fct_relevel( as.character(1:grp_num) )
 
@@ -149,15 +152,11 @@ PLScoef <- '~/OneDrive/Data.backup/QEAData/Matlab_PLS' %>%
                       'CH3.csv', sep = '_')) %>%  
       read_csv(col_types = cols(.default = col_double())) 
 # rename the columns name
-if (`!=`(names(PLScoef)[1:3], 
-         paste0('g', 1L, '_', c('coef', 'sd', 't'))) %>% any()
-    ) {for (i in 1:grp_num) {
-           names(PLScoef)[seq(1:3) + 3*(i - 1)] <-
-           paste0('g', i, '_', c('coef', 'sd', 't'))
-           }
+if (!all.equal(names(PLScoef)[1:3], paste0('g', 1L, '_', c('coef', 'sd', 't')))
+    ) { for (i in 1:grp_num) names(PLScoef)[seq(1:3) + 3*(i-1)] <- 
+                paste0('g', i, '_', c('coef', 'sd', 't'))
        }
 
-# assign the model type term ====
 # Asset pricing model, CAPM, CH3 or FF5? 
 if (nrow(PLScoef) == 3) {
         Modeltype <- 'CH3'
@@ -174,8 +173,8 @@ if (nrow(PLScoef) == 3) {
         }
 
 
-####### Part III, visual the group external relationship #########
-# link the PLS cluster result with stokcs feature and 
+# Part III, visual the group external relationship ------------------------
+# link the PLS cluster result with stocks feature and 
 # accounting indicators from quarterly earnings report 
 
 # rename the group identity using in plot (legend guide)
@@ -285,7 +284,7 @@ count(g_accfea, g_PLS, CompanyOpacity) %>% na.omit() %>%
               axis.title.y = element_text(margin = margin(r = 10))
               )
 
-mod_figure("histogram-gOpacity", 2L, 1)
+mod_figure("histogram-gOpacity", 2L, 1.2)
 
 g_accfea %<>% gather(AttentionType, Attention, AnaAttention, ReportAttention) %>% 
         arrange(Stkcd)
@@ -315,7 +314,8 @@ group_by(g_accfea, CompanyOpacity, AttentionType) %>%
 mod_figure("histogram-Opacity", 2L, 1.5)
 
 
-######## Part IV, Calculate AR and CAR within event window ##########
+
+# Part IV, Calculate AR and CAR within event window -----------------------
 
 # the correlation coefficient between explanation variables ====
 stkest_ff <- lapply(stkest, select, 
@@ -331,7 +331,7 @@ OLScoef <- select(stkest_ff, Stkcd, lm) %>% unnest(cols = "lm")
 # save the OLS estimate, compared with MATLAB's
 mod_write(OLScoef, "OLScoef")
 
-# gather the data in panel form to plot the distrubution of estimators
+# gather the data in panel form to plot the distribution of estimators
 QEA_ggOLS <- gather(OLScoef, key = Statistics, value = Parameter, estimate:p.value) %>% 
         # term obtain the explanation variables and intercept in our model
         arrange(Stkcd, term) %>% 
@@ -351,7 +351,7 @@ title = "The distribution of estimated intercept (OLS) of Fama-French multi-fact
               axis.text.y = element_blank()
               )
 
-mod_figure("Intercept", 1L, 1)
+mod_figure("Intercept", 1L, 1.2)
 
 # the distribution of coefficients of explanation variables 
 f_coef <- filter(QEA_ggOLS, term != "(Intercept)" & Statistics == "estimate") %>% 
@@ -367,8 +367,6 @@ title = "The distribution of OLS estimators of Fama-French multi-factor model") 
               plot.title = element_text(size = 12),
               legend.position = "none")
 
-
-############ AR and CAR ################
 
 # calculate AR ====
 OLScoef %<>% split(.$Stkcd) 
@@ -469,8 +467,8 @@ f_car <- ggplot(QEA_ggCAR, aes(x = Timeline, y = CAR, colour = g_PLS)) +
         scale_color_manual(values = c(brewer.pal(grp_num, "Set1"), "#999999")) +
         scale_x_continuous(breaks = seq(-30, 30, by = 5)) + 
         labs(title = title_char, x = "Time line", y = 'Cumulative Abnormal Return (CAR)') + 
-        geom_hline(yintercept = 0L, linetype = "dashed", size = 1.0) +
-        # geom_ref_line(h = 0) +
+        # geom_hline(yintercept = 0L, linetype = "dashed", size = 1.0) +
+        geom_ref_line(h = 0, colour = "#999999") +
         theme_bw() +
         theme(plot.title = element_text(size = 14),
               axis.title.y = element_text(face = c("italic"), margin = margin(r = 10)),
@@ -508,9 +506,9 @@ f_Dret_sd <- ggplot(QEA_Dret_sd, aes(x = timeline, y = Dretmrf_sd, colour = g_PL
           )
 
 
-# Export the comprehensiv plot
+# Export the comprehensive plot
 multi_panel_figure(width = 320, height = 300,
-                   columns = 4, rows = 5) %>%  # create a multi-figure
+                   columns = 4, rows = 5) %>%  # create a figure
     fill_panel(f_car, column = 1:4, row = 1:2) %>%
     fill_panel(f_coef, column = 1:2, row = 3:5) %>% 
     fill_panel(f_Dret_sd, column = 3:4, row = 3) %>%

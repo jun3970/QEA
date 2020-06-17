@@ -1,7 +1,13 @@
 # This script is written for reading CSMAR data batched, 
-# and then writen into SQLite database.
-# Importing data through querying the SQL database will solve
-# the problem of memory shortage and process timeout.
+# and then store them as tables in SQLite database.
+
+## Importing data through querying the SQL database will solve
+## the problem of memory shortage and process timeout,
+## but the relative shortcoming is the data type defined in R will vanish,
+## especially for the date and factor.
+## So, after querying the data we desired, 
+## we need to transform the data type of them carefully.
+
 library(magrittr)
 library(lubridate)
 library(tidyverse)
@@ -24,7 +30,7 @@ annual_path <- list.files("./Acc_Annual", full.names = TRUE,
         pattern = "^(CSR|FAR|MNM).*[^]]\\.txt$")
         
 annual <- foreach(i = 1:length(annual_path),
-                # the combine pattern is taking inersection
+                # the combine approach is taking collection
                 .combine = full_join,
                 .packages = c("readr")) %dopar%
         read_delim(annual_path[i], delim = "\t", na = '',
@@ -42,7 +48,7 @@ quarter_path <- list.files("./Acc_Quarter", full.names = TRUE,
           pattern = "[0-9]\\.txt$")
 
 quarter <- foreach(i = 1:length(quarter_path),
-                .combine = full_join,  # taking all set
+                .combine = full_join,
                 .packages = c("readr")) %dopar%
         read_delim(quarter_path[i], delim = "\t", na = '',
                 col_types = cols(.default = col_double(),
@@ -90,8 +96,8 @@ trd_Dret <- map(TRD_Dalyr, ~ {with(.x,
 
 # confirm the daily returns of stocks we calculated is same with CSMAR's
 if(map2_lgl(trd_Dret, TRD_Dalyr, ~ {
-        near(round(.x, digits = 4),  # daily return calculate by ourself
-             round(pull(.y, Dretnd)[-1], digits = 4)) %>% # daily retrn form CSMAR
+        near(round(.x, digits = 4),  # daily return calculate by ourselves
+             round(pull(.y, Dretnd)[-1], digits = 4)) %>% # daily return form CSMAR
         any()}) %>%  # for all date of a stock
         any()  # for all stocks 
    ) {  # if the daily returns from CSMAR are same with us.

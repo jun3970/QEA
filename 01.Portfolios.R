@@ -1,36 +1,30 @@
-# Summary of this Script ====
-# CC Hongyu Hu
-# 2018.04--2019.10
+# This R script is written for structuring the 5*5 stock portfolios
+# and 2*3 mimicking risk factors, size and value, in Chinese A-share markets.
 # 
-# This R script is writen for obtaining the 5*5 stock portfolios
-# and 2*3 mimicing risk factors formed on size and value 
-# in Chinese A-share markets, these stocks symbol begin with 00, 30, 60.
+# MKT
+# The market risk factor, MKT, is the return on the systemic invest risk
+# in Chinese A-Share Markets (a value-weighted portfolio formed with all stocks)
+# in excess of the current period one-year deposit interest rate by daily.
+#
+# SIZE
+# The `size` of a stock is computed as the closing price times total shares
+# at the end trading date two quarters ago.
+#
+# to obtain the factor, SMB (the daily risk return of small stocks minus big's), 
+# we use the median size of stocks belong to Chinese A-Share markets to
+# split stocks into two groups, Small and Big.
+#
+# VALUE
+# A stock’s `value` (earnings-to-price, EP) is the ratio of 
+# the quarterly earnings (net profit excluding non-recurrent gains/losses)
+# to the product of its closing price and total shares.
 # 
-# The quantity of a stock *size* is computed as the end of
-# previous quarter’s closing price times its total shares.
-# A stock’s value (earnings-to-pric, EP) is the ratio of 
-# the quarterly earnings which is the most recently reported net profit 
-# excluding nonrecurrent gains/losses in last quarter 
-# to the product of its closing price and total shares at ending of last quarter.
-# 
-# We weight each stock by its market capitalization
-# produce by its outstanding A shares, including nontradable shares,
-# product its daily closing price at present.
-#           
-# The market factor, MKT, is the return on the value-weighted portfolio
-# formed with all stocks in Chinese A-Share Markets
-# in excess of the current period one-year deposit interest rate.
-# 
-# For the size factor, SMB (small minus big), we obtain it by using
-# the median size of stocks belong to Chinese A-Share markets to
-# split stocks into two groups, small and big.
-# 
-# To obtain the value factor, VMG (value minus growth),
-# We break stocks into three groups by earnings-to-price ratio
-# based on the breakpoints for the ranked bottom 30% (value, V),
-# middle 40% (Medium, M), and top 30% (growth, G) in each quarter 'q'.
-# 
-# That is our size and size factors, denoted as SMB and VMG,
+# To obtain the factor, VMG (value minus growth), We cluster stocks into three groups 
+# based on the breakpoints of earnings-to-price, bottom 30% (Growth, G),
+# middle 40% (Medium, M), and top 30% (Value, V).
+#
+# That is the difference risk returns among diverse level of size and value portfolios, 
+# denoted as factors SMB and VMG,
 # combined the returns on these six intersect portfolios as follows,
 # 
 # SMB = 1/3 (Small Value + Small Neutral + Small Growth) –
@@ -38,6 +32,12 @@
 # 
 # VMG = 1/2 (Small Value + Big Value) –
 #       1/2 (Small Growth + Big Growth).
+#
+# In the portfolio structure process, 
+# we weight each stock by its market capitalization.
+# The market capitalization of a stock is produced by 
+# its outstanding A shares, including non-tradable shares,
+# product its daily closing price at present.
 # 
 # Note that daily value-weighted returns on the six portfolios
 # are calculated from 'q' quarter to 'q+1' quarter
@@ -46,14 +46,19 @@
 library(tidyverse)
 library(lubridate)
 library(magrittr)
+
 library(glue)
 library(broom)
+library(gt)
+library(RColorBrewer)
 
 library(DBI)
 library(RSQLite)
 library(dbplyr)
 
-####### Part I, import data ########
+
+# Part I, import data -----------------------------------------------------
+
 # working directory
 setwd('~/OneDrive/Data.backup/QEAData/')
 # link to SQLite database
@@ -61,10 +66,10 @@ QEA_db <- dbConnect(SQLite(), "QEA_db.sqlite")
 # Import the daily trading in China A-Share markets
 trddat <- dbGetQuery(QEA_db, 
         "SELECT Stkcd, TradingDate, Clsprc, Dretnd, Dsmvosd, Markettype
-        FROM daily")
+         FROM daily")
 # transform the record of trading date to date form
 trddat$TradingDate %<>% as.Date(origin = "1970-01-01")
-                                                        
+
 # Import the daily one-year-deposit-interest-rate, free-risk return in market 
 Nrrate <- read_delim('TRD_Nrrate.csv', delim = '\t', na = '',
         col_types = cols_only(Nrrdaydt = col_double(),
@@ -80,7 +85,7 @@ Nrrate <- read_delim('TRD_Nrrate.csv', delim = '\t', na = '',
 trddat %<>% split(.$Stkcd) %>%  # split by stock
         lapply(left_join, Nrrate, by = 'TradingDate')
 
-# Input the listing date and idustry of stocks 
+# Input the listing date and industry of stocks 
 # for wiping out the stocks listed newly 
 AF_Co <- read_delim('AF_Co.csv', delim = '\t', na = '',
         col_types = cols_only(Stkcd = col_character(),
@@ -106,20 +111,20 @@ trddat %<>% `[`(intersect(names(.), pull(AF_Co, Stkcd))) %>%
         lapply(arrange, TradingDate)
 
 
-# the structure of shares of stocks (annual capitialzation)
+# the structure of shares of stocks (annual capitalization)
 Nshr <- read_delim("./Acc_Annual/CG_Capchg.txt", delim = '\t', na = '',
         col_types = cols_only(Stkcd = col_character(),
-                 Reptdt = col_date(format = "%Y-%m-%d"),  # the annual interval
-                 Nshrnn = col_double(),  # non-circulation
-                 Nshra = col_double())  # A-shares under circulation
+                Reptdt = col_date(format = "%Y-%m-%d"),  # the annual interval
+                Nshrnn = col_double(),  # non-circulation
+                Nshra = col_double())  # A-shares under circulation
         ) %>% # take a sum of non-circulation shares and A-shares
         transmute(Stkcd, Reptdt, shrttl = Nshrnn + Nshra) %>% 
-        # for merge convinence, just extraction the year of report date (annual data)
-        mutate(Reptdt = str_sub(Reptdt, 1L, 4L)) %>% 
+        # for merge convenience, just extraction the year of report date (annual data)
+        mutate(Reptdt = year(Reptdt)) %>% 
         arrange(Reptdt)
 
 
-# Setup trading day arround QEA ====
+# Setup trading day in Chinese A-share markets
 trdday <- read_delim('TRD_Cale.csv', delim = '\t', na = '',
         col_types = cols(Markettype = col_factor(c(1,2,4,8,16,32)),
                 Clddt = col_date(format = "%Y-%m-%d"),
@@ -134,9 +139,10 @@ trdday <- read_delim('TRD_Cale.csv', delim = '\t', na = '',
         # columns by market class
         spread(Markettype, State) %>% na.omit()
 # confirm the trade calendar is same among different kinds of share in China A-share market
-if (sum(all_equal(trdday$`1`, trdday$`4`),
-       all_equal(trdday$`1`, trdday$`16`),
-       all_equal(trdday$`4`, trdday$`16`)) == 3L
+if (sum(all.equal(trdday$`1`, trdday$`4`),
+        all.equal(trdday$`1`, trdday$`16`),
+        all.equal(trdday$`4`, trdday$`16`)
+        ) == 3L
    ) {  # we take the trading dates of Shanghai A-share as China A-share market's
         trdday %<>% filter(.$`1` == "O") %>% pull(TradingDate)
 } else print("Attention! The trading dates among China A-share markets are different.")
@@ -145,7 +151,9 @@ if (sum(all_equal(trdday$`1`, trdday$`4`),
 save.image('./CH3/PrePotfol.RData')
 
 
-######## Part II, reproduce Fama-French multi-factor model ########
+
+# Part II, reproduce Fama-French multi-factor model -----------------------
+
 # set the type of multi-factor model
 # yearly, FF5 (Fama-French, 2015)
 # quarterly, CH3 (Liu, 2018)
@@ -154,7 +162,7 @@ model_type <- "CH3"
 # set the type of Value: EPS, BVPS, or CFPS
 # That is we could select a index from these three accounting indicator 
 # as the cluster standard of factor `Value` in multi-factor model
-# EPS: earings-to-price
+# EPS: earnings-to-price
 # BVPS: book-to-market (equity)
 # CFPS: the radio of cash flow to closing price
 Value_type <- "EPS"
@@ -191,7 +199,7 @@ potfolreg <- vector(mode = 'list', length = length(Accprd)) %>%
 
 
 for (q in 1:length(Accprd)) { # loop in quarter
-        
+
 # It is rational that investors make decision according to accounting index
 # in earnings report of quarter `q-2`, they known recently,  at the begining of quater `q`. 
 # so we using the accounting indicators at `q-2` to structure portfolios at quarter `q`
@@ -223,16 +231,18 @@ for (q in 1:length(Accprd)) { # loop in quarter
                     nrow() >= 15L))  # less than 15 trading records in the past month
   
     # import the information of earnings report
+    ## There is a shortcoming in this part, we will just select  
+    ## the earnings reports of parent listed company to analysis (Typrep == "A").
     if (model_type == "CH3") {
             # earnings report at quarter t-2 
             ReptInfo_Acc <- tbl(QEA_db, "quarter") %>% 
                     filter(Accper == !!as.integer(ahdqua)) %>% 
                     filter(Stkcd %in% !!names(trddats)) %>% 
-                    filter(Typrep == "A") %>%  # union report
+                    filter(Typrep == "A") %>%  
                     select(Stkcd, Accper, F020105) %>% 
                     collect() %>% 
                     arrange(Stkcd, Accper)
-            
+
             ReptInfo_Acc %<>% rename("EPS" = F020105) 
     
     } else if (model_type == "FF5") {
@@ -255,12 +265,12 @@ for (q in 1:length(Accprd)) { # loop in quarter
     trddats %<>% `[`(intersect(names(.), pull(ReptInfo_Acc, Stkcd)))
     
     # extract the closing price of stocks at the ending of quarter t-2 ====
-    # and get the group index bsaed on factors size and value
+    # and get the group index based on factors size and value
     # Notice that only the stocks, which published quarter financial report,
     # are brought into our sample to structure portfolio
     potfol <- lapply(trddats, filter, TradingDate == ymd(splday)) %>% 
             bind_rows() %>% inner_join(ReptInfo_Acc, by = "Stkcd") %>% 
-            mutate("Reptdt" = str_sub(TradingDate, 1L, 4L)) %>% 
+            mutate("Reptdt" = year(TradingDate)) %>% 
             inner_join(Nshr, by = c("Stkcd", "Reptdt")) %>% 
             select(-Reptdt) %>% 
             mutate(# size, the number of shares product its closing price
@@ -281,7 +291,7 @@ for (q in 1:length(Accprd)) { # loop in quarter
                     lapply(filter, TradingDate %within% 
                             interval((Accprd[q] + days(1)) %m+% months(-3), Accprd[q])) %>% 
                     bind_rows()
-            
+    
     } else if (model_type == "FF5") {  
             # extract the time series data at year `y`
             trdff <- trddats[pull(potfol, Stkcd)] %>%  
@@ -358,47 +368,24 @@ for (q in 1:length(Accprd)) { # loop in quarter
     
     # calculate the weighted returns of different portfolios
     trdff_x %<>% mutate("Portfolio.Ret" = map(data, 
-                    ~ summarise(.x, Ret = Dretnd %*% (Dsmvosd / sum(Dsmvosd)))))
+                    ~ summarise(.x, Ret = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), .groups = 'keep'))
+                    )
     
     if (model_type == "CH3") {
             
             trdff_x %<>% mutate(
                     "SMB" = map_dbl(Portfolio.Ret, ~ group_by(.x, g.SMB) %>% 
-                                    summarise("avgRet" = mean(Ret)) %>% 
+                                    summarise("avgRet" = mean(Ret), .groups = 'keep') %>% 
                                     spread(g.SMB, avgRet) %>% 
                                     with(., Small - Big)),
                     
                     "VMG" = map_dbl(Portfolio.Ret, ~ group_by(.x, g.VMG) %>% 
-                                    summarise("avgRet" = mean(Ret)) %>% 
+                                    summarise("avgRet" = mean(Ret), .groups = 'keep') %>% 
                                     spread(g.VMG, avgRet) %>% 
                                     with(., Value - Growth))
                     )
             
     } # else if(model_type == "FF5") {}
-    
-    
-    # data-visualization, plot a line figure ====
-    if (model_type == "CH3") {
-    
-    select(trdff_x, TradingDate, Portfolio.Ret) %>% 
-            unnest(cols = Portfolio.Ret) %>% 
-            filter(g.VMG != "V.Neutral") %>% 
-    ggplot() +
-            geom_line(aes(TradingDate, Ret, colour = g.SMB, linetype = g.VMG)) +
-            labs(title = "Daily returns of portfolios Weighted by circulation market value",
-                 y = "Daily returns") +
-            scale_color_brewer(palette = "Set1") +
-            theme_bw() +
-            theme(plot.title = element_text(face = "bold"),
-                  axis.title.x = element_blank(),
-                  legend.position = "bottom",
-                  legend.title = element_blank(),
-                  legend.text = element_text(size = 14))
-        
-    } # else if(model_type == "FF5") {}
-    
-    ggsave(glue("./CH3/figure_portfolio_return/{Accprd[q]}_figure_portfolio_return.pdf"),
-       width = 16, height = 9, dpi = 300, units = "in", limitsize = F)
     
     
     ##### The dependent variable, weighted daily returns of 5*5 portfolios #####
@@ -423,7 +410,6 @@ for (q in 1:length(Accprd)) { # loop in quarter
     } # else if(model_type == "FF5") {}
     
     
-    
     # join the trading data of stocks with portfolio structure (cluster)
     # Notice that this step will abandon the stocks which are not included in our sample
     if (model_type == "CH3") {
@@ -432,14 +418,38 @@ for (q in 1:length(Accprd)) { # loop in quarter
                     select(potfol_y, Stkcd, g.SMB, g.VMG), by = "Stkcd") %>% 
                     # Generate the calendar ordered lists
                     group_by(TradingDate) %>% nest() %>%  
-                    # caluculate the daily returns of portfolios 
+                    # calculate the daily returns of portfolios 
                     # weighted by circulation market value
                     transmute("p.Ret" = map(data, 
-  ~ summarise(group_by(.x, g.SMB, g.VMG), "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)))
+              ~ summarise(group_by(.x, g.SMB, g.VMG), 
+              "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)), .groups = 'keep')
                             )) %>% 
                     unnest(cols = "p.Ret")
             
-    } # else if(modle_type == "FF5") {}
+            
+            # data-visualization, plot a line figure ====
+            filter(portfolio_ret, 
+               `&`(g.SMB %in% c("Small", "Big"),
+                   g.VMG %in% c("Value", "Growth"))) %>% 
+            ggplot(mapping = aes(x = TradingDate, y = ptf_Ret)) +
+            geom_line(aes(colour = g.SMB, linetype = g.VMG)) + 
+            labs(title = "Daily returns of portfolios (5*5) Weighted by circulation market value",
+                 y = "Daily returns") +
+            scale_color_brewer(palette = "Set1") +
+            labs(title = "Daily return of portfolios structured in size and value",
+                 y = "Daily return of portfolios") +
+            theme_bw() +
+            theme(plot.title = element_text(face = "bold"),
+                  axis.title.x = element_blank(),
+                  legend.position = "bottom",
+                  legend.title = element_blank(),
+                  legend.text = element_text(size = 15))
+        
+            ggsave(glue("./CH3/figure_portfolio_return/{Accprd[q]}_portfolio_return.pdf"),
+               width = 16, height = 9, dpi = 300, units = "in", limitsize = F)
+            
+    } # else if(model_type == "FF5") {}
+    
     
     # retain the daily data for running regression
     if (model_type == "CH3") {
@@ -478,21 +488,64 @@ for (q in 1:length(Accprd)) { # loop in quarter
                     mutate("Coef" = map(lm_FF5_result, tidy))
             
     }
-                
+    
 }
 
 save(potfolreg, file = glue("./CH3/Hu-CH3.RData"))
+dbDisconnect(QEA_db); rm(QEA_db)
 
-# portfolio estimate to generate table
-pft_est <- map(potfolreg, ~ select(.x, c("g.SMB", "g.VMG", "Coef"))) %>% 
-        bind_rows(.id = "Accprd") %>% 
-        unnest(cols = "Coef")
+# visualizing the factor value --------------------------------------------
+Accprd.year <- unique(year(Accprd))
+
+for (i in seq_along(Accprd.year)) {
+
+    FF_factor <- lapply(potfolreg, unnest, cols = c("data")) %>% 
+        lapply(as_tibble) %>%  # remove the group attributes
+        map_dfr(select, c('TradingDate', 'mkt_rf', 'SMB', 'VMG')) %>% 
+        distinct() %>%  # duplicated among different portfolios
+        gather(Factor, Return, names(.)[-1]) %>% 
+        filter(year(TradingDate) == Accprd.year[i]) %>% # annually
+        mutate("month" = month(TradingDate, label = TRUE),
+               "day" = day(TradingDate))
+    
+    ggplot(data = FF_factor) +
+        # The month that earnings report are released
+        geom_rect(data = data.frame(month = factor(c("Jan", "Apr", "Jul", "Oct"))),
+            aes(xmin = 1, xmax = 31, ymin = -Inf, ymax = Inf),
+            alpha = 0.1, fill = 'blue') +
+        geom_path(aes(x = day, y = Return, linetype = Factor, group = Factor, color = Factor)) + 
+        facet_wrap( ~ month, ncol = 3) +
+        labs(y = "The difference return of Mimicking-risk factor") +
+        scale_color_brewer(palette = "Set1") +
+        theme_bw() +
+        theme(legend.position = "bottom",
+              axis.title.x = element_blank())
+    file.path(getwd(), "CH3", glue('{Accprd.year[i]}_path-CH3_factor.pdf')) %>% 
+    ggsave(width = 16, height = 9, dpi = 300, units = "in", limitsize = F)
+
+}
+
+
+
+library(knitr)
+library(kableExtra)
+
+# table - portfolio estimates
+map_dfr(potfolreg, unnest, cols = c("Coef"), .id = "quarter") %>% 
+    select(-c(data:lm_CH3_result)) %>% 
+        group_by(quarter, g.SMB, g.VMG) %>% 
+        DT::datatable(rownames = FALSE)
+
 
 # factors
 # map(potfolreg, "data") %>% flatten_dfr() %>% select(- ptf_Ret) %>% unique.data.frame()
-factor_exp <- map(potfolreg, "data") %>% 
+map(potfolreg, "data") %>% 
         # the factors data are same among portfolios every quarter, we just need one 
-        map(`[`(1L)) %>%
-        bind_rows() %>% 
-        select(-ptf_Ret)
-
+        map_dfr(`[`(1L)) %>%
+        select(-c("ptf_Ret", "Nrrdaydt")) %>% # %>% gt::gt() 
+        mutate("TradingDate" = format(TradingDate, "%Y-%m")) %>% 
+        group_by(TradingDate) %>% 
+        summarise_if(is.numeric, .funs = mean) %>% 
+        # as.data.frame() %>% stargazer(rownames=FALSE)
+        kable("latex", booktabs = T, longtable = T) %>% 
+        kable_styling(latex_options = c("repeat_header"), position = "center")

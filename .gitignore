@@ -40,5 +40,5 @@ PLS/
 figure/
 *slide_files/
 *.pdf
-
+*.tex
 *.bat
