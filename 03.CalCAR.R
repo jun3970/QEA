@@ -11,14 +11,26 @@ library(broom)
 
 library(multipanelfigure)
 library(RColorBrewer)
-display.brewer.all()
+# display.brewer.all()
 library(ggthemes)
 
-# Part I, import data and assign parameter -------------------------------
 source('~/R/QEA/QEA.R/function_QEA.R')
 
-setwd('~/OneDrive/Data.backup/QEAData/')
+# Part I, import data and assign parameter -------------------------------
 
+# assign basic parameters about quarter and sample attributes ====
+Accprd <- ymd('2017-09-30')  # focus on a specific quarter 
+# the type of stocks that weather had publish pre-report
+Pretype <- 6L  
+# the market types that the stocks in our sample
+Markettype <- 21L
+# if we just want to analysis a sub-sample?
+subsam <- FALSE
+## if the value of `subsam` is a number, for example, subsam <- 300L
+## the analysis results of below script will just based on a sub-sample 
+
+
+setwd('~/OneDrive/Data.backup/QEAData/')
 # the listing date and industry information of stocks 
 AF_Co <- read_delim('AF_Co.csv', delim = '\t', na = '',
         col_types = cols_only(Stkcd = col_character(),
@@ -43,7 +55,8 @@ AF_Cfeature <- read_delim('./Acc_Annual/AF_CFEATUREPROFILE.txt', delim = '\t', n
             # the information opacity of company (disclosure by stock exchange)
             CompanyOpacity = col_character()
             )
-        )
+        ) %>% # just need to select annual data of this year
+        filter(year(Accper) == year(Accprd))
 
 # Import the status data of quarterly financial report 
 ## Note that we observe that the symbols of these stocks are begin with number c(0, 3, 6),
@@ -67,76 +80,21 @@ ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', delim = '\t', na = '',
         arrange(Stkcd, Accper) %>% 
         # select the stocks which are belong to China A-Share markets
         filter(grepl('^[0-6]', Stkcd)) 
-
 # Attention! there has some problem observations, we choose to delete them
 if (nrow(problems(ReptInfo)) >= 0L)  ReptInfo %<>% `[`(-unique(problems(.)$row), ) 
 
 
-# assign basic parameters about quarter and sample attributes
-Accprd <- ymd('2017-09-30')  # focus on a specific quarter 
-Pretype <- 6L
-Markettype <- 21L
-# set working directory
-setwd(file.path(getwd(), "CH3", year(Accprd)))
-# set export directory
-datdir <- file.path(getwd(), Accprd)
-if (!dir.exists(datdir))  dir.create(datdir)
-
-# import data of estimate window
-stkest <- mod_read("stkest") %>% split(.$Stkcd)
-# import data of event window
-stkeve <- mod_read("stkeve") %>% split(.$Stkcd)
-# just need to select annual data of this year
-AF_Cfeature %<>% filter(year(Accper) == year(Accprd))
-
-# if we just want to analysis a sub-sample?
-## if the value of `subsam` is a number,
-## we will structure a sample to implement our analysis
-subsam <- FALSE
-# subsam <- 300L
-if (is.numeric(subsam)) { 
-    set.seed(subsam)
-    stk_sam <- names(stkeve) %>% sample(size = subsam)
-    stkest %<>% `[`(stk_sam)
-    stkeve %<>% `[`(stk_sam)
-} else if (`==`(subsam, FALSE)) print("We will analysis the whole sample.")
-
-# the number of stocks in our sample
-N <- length(stkeve)
-# the time series period of event window
-TS <- nrow(stkeve[[N]])
-# the time line of event window
-timeline <- (-(TS - 1L) / 2):((TS - 1L) / 2)
-
-
-# classo (zhan gao) -------------------------------------------------------
-
-# library(classo)
-# library(Rmosek)
-
-# K_num <- 3L  # the number of groups we want
-# winlen <- nrow(stkest[[N]])  # the length of estimate window
-# Ret <- bind_rows(stkest) %>% pull(Dret_rf) %>% as.matrix()
-# CH3 <- bind_rows(stkest) %>% select(mkt_rf, SMB, VMG) %>% as.matrix()
-# lambda <- as.numeric( 0.5 * var(Ret) / (winlen^(1/3)) )
-
-# pls_out <- PLS.cvxr(N, winlen, Ret, CH3, K = K_num, lambda = lambda)
-
-
 # Part II, Read the result from MATLAB, PLS(su, 2016) ---------------------
-
 # Group information
 PLSclus <- '~/OneDrive/Data.backup/QEAData/Matlab_PLS' %>% 
-        file.path(paste("group", Accprd, Pretype, Markettype,
-                        'CH3.csv', sep = '_')) %>% 
+        file.path(., dir(path = ., 
+            pattern = paste("group", Accprd, Pretype, Markettype, sep = '_'))) %>% 
         read_csv(col_types = cols( g_PLS = col_factor() ))
-
 # the number of groups by PLS (su, 2016)
 grp_num <- PLSclus$g_PLS %>% levels() %>% length()
 # re-level the order of group levels, this process is very important!
 # without it, the order of groups in plot will be incorrect.
 PLSclus$g_PLS %<>% fct_relevel( as.character(1:grp_num) )
-
 # rename the group identity
 if (grp_num == 2) {
         grp_name <- c("group one", "group two")
@@ -145,18 +103,16 @@ if (grp_num == 2) {
 } else if (grp_num == 4) {
         grp_name <- c("group one", "group two", "group three", "group four")
 } else print("The group number is not included in script!")
-
 # PLS coefficients
 PLScoef <- '~/OneDrive/Data.backup/QEAData/Matlab_PLS' %>% 
-      file.path(paste("PLS", Accprd, Pretype, Markettype, 
-                      'CH3.csv', sep = '_')) %>%  
-      read_csv(col_types = cols(.default = col_double())) 
+        file.path(., dir(path = ., 
+            pattern = paste("PLS", Accprd, Pretype, Markettype, sep = '_'))) %>% 
+        read_csv(col_types = cols(.default = col_double())) 
 # rename the columns name
 if (!all.equal(names(PLScoef)[1:3], paste0('g', 1L, '_', c('coef', 'sd', 't')))
     ) { for (i in 1:grp_num) names(PLScoef)[seq(1:3) + 3*(i-1)] <- 
                 paste0('g', i, '_', c('coef', 'sd', 't'))
        }
-
 # Asset pricing model, CAPM, CH3 or FF5? 
 if (nrow(PLScoef) == 3) {
         Modeltype <- 'CH3'
@@ -171,6 +127,41 @@ if (nrow(PLScoef) == 3) {
         fct_name <- c("mkt_rf")
         mod_lm <- function(df) lm(Dret_rf ~ mkt_rf, data = df)
         }
+
+# reset the working directory
+setwd(file.path(getwd(), Modeltype, year(Accprd)))
+# set the directory that we export result files 
+datdir <- file.path(getwd(), Accprd)
+if (!dir.exists(datdir))  dir.create(datdir)
+# import data of estimate window
+stkest <- mod_read("stkest") %>% split(.$Stkcd)
+# import data of event window
+stkeve <- mod_read("stkeve") %>% split(.$Stkcd)
+# the sample size
+if (is.numeric(subsam)) { 
+    set.seed(subsam)
+    stk_sam <- names(stkeve) %>% sample(size = subsam)
+    stkest %<>% `[`(stk_sam)
+    stkeve %<>% `[`(stk_sam)
+} else if (`==`(subsam, FALSE)) print("We will analysis the whole sample.")
+# the number of stocks in our sample
+N <- length(stkeve)
+# the time series period of event window
+TS <- nrow(stkeve[[N]])
+# the time line of event window
+timeline <- (-(TS - 1L) / 2):((TS - 1L) / 2)
+
+# classo (zhan gao) -------------------------------------------------------
+# library(classo)
+# library(Rmosek)
+
+# K_num <- 3L  # the number of groups we want
+# winlen <- nrow(stkest[[N]])  # the length of estimate window
+# Ret <- bind_rows(stkest) %>% pull(Dret_rf) %>% as.matrix()
+# CH3 <- bind_rows(stkest) %>% select(mkt_rf, SMB, VMG) %>% as.matrix()
+# lambda <- as.numeric( 0.5 * var(Ret) / (winlen^(1/3)) )
+
+# pls_out <- PLS.cvxr(N, winlen, Ret, CH3, K = K_num, lambda = lambda)
 
 
 # Part III, visual the group external relationship ------------------------
@@ -318,11 +309,9 @@ mod_figure("histogram-Opacity", 2L, 1.5)
 # Part IV, Calculate AR and CAR within event window -----------------------
 
 # the correlation coefficient between explanation variables ====
-stkest_ff <- lapply(stkest, select, 
-                    c("Stkcd", "Dret_rf", all_of(fct_name))
-                    ) %>% 
-    bind_rows() %>% group_nest(Stkcd) %>% 
-    mutate("cor_var" = map(data, ~ cor( select(.x, - c("Dret_rf")) ))) 
+stkest_ff <- map_dfr(stkest, select, c("Stkcd", "Dret_rf", all_of(fct_name))) %>% 
+        group_nest(Stkcd) %>% 
+        mutate("cor_var" = map(data, ~ cor( select(.x, - c("Dret_rf")) ))) 
 
 # Obtain the OLS estimate parameters =====
 # function `tidy` return estimate, std.error, statistic, p.value 
@@ -450,15 +439,15 @@ title_char <- paste0("The path of grouped cumulative abnormal returns ",
     "\nfollowing the stocks's quarterly earnings reports at accounting period ", 
     glue("{(Accprd + days(1)) %m+% months(-3)} ~ {Accprd} were announced"))
 
-# the index of the rect in plot of CAR
-rect_index <- tibble::tribble(
-    ~tier, ~xmin, ~xmax, ~ymin, ~ymax,
-    1, -10,  0,  0.0025,  0.0175,
-    1,   0,  5,   -0.01, -0.0025,
-    2, +10, 20,   -0.02,    0.02,
-    3, +25, 30,  0.0070,  0.0130,
-    3, +25, 30, -0.0275,   -0.02
-)
+# # the index of the rect in plot of CAR
+# rect_index <- tibble::tribble(
+#     ~tier, ~xmin, ~xmax, ~ymin, ~ymax,
+#     1, -10,  0,  0.0025,  0.0175,
+#     1,   0,  5,   -0.01, -0.0025,
+#     2, +10, 20,   -0.02,    0.02,
+#     3, +25, 30,  0.0070,  0.0130,
+#     3, +25, 30, -0.0275,   -0.02
+# )
 
 # CAR
 f_car <- ggplot(QEA_ggCAR, aes(x = Timeline, y = CAR, colour = g_PLS)) + 
@@ -474,12 +463,11 @@ f_car <- ggplot(QEA_ggCAR, aes(x = Timeline, y = CAR, colour = g_PLS)) +
               axis.title.y = element_text(face = c("italic"), margin = margin(r = 10)),
               legend.position = "bottom", 
               legend.title = element_blank(),
-              legend.text = element_text(size = 14, face = "bold")
-              ) +
-    geom_rect(data = rect_index, inherit.aes = FALSE, 
-        aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = factor(tier)), 
-        alpha = 0.2, show.legend = FALSE
-              ) 
+              legend.text = element_text(size = 14, face = "bold")) # +
+    # geom_rect(data = rect_index, inherit.aes = FALSE, 
+    #     aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = factor(tier)), 
+    #     alpha = 0.2, show.legend = FALSE
+    #           ) 
     
 # calculate the standard deviation of daily returns of stocks for plot at last
 QEA_Dret_sd <- lapply(stkeve, add_column, 
@@ -504,7 +492,6 @@ f_Dret_sd <- ggplot(QEA_Dret_sd, aes(x = timeline, y = Dretmrf_sd, colour = g_PL
           axis.title = element_blank(),
           legend.position = "none",
           )
-
 
 # Export the comprehensive plot
 multi_panel_figure(width = 320, height = 300,

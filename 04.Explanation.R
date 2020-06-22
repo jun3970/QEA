@@ -2,9 +2,7 @@
 # we have two kind of explanation variables, trading and factor
 # and we run two kind of regression, time series and cross-sectional
 
-# All models are wrong, but some are useful.
-# The goal of a model is not to uncover truth, 
-# but to discover a simple approximation that is still useful.
+# Preparation --------------------------------------------------------------
 
 library(tidyverse)
 library(lubridate)
@@ -31,89 +29,161 @@ library(DBI)
 library(RSQLite)
 library(dbplyr)
 
-
-# function ----------------------------------------------------------------
 source('~/R/QEA/QEA.R/function_QEA.R')
 
-# generate a summary table of our variable (feature) by package gt
-gt_var_sum <- function(statistic) {
-    
-    eve_tbl_summary %>% 
-        dplyr::select(c("Timeline", "g_PLS") | ends_with(statistic)) %>% 
-        group_by(g_PLS) %>% 
-        gt::gt() %>% 
-        tab_header(
-            title = glue("The {statistic} of explanation variables"),
-            subtitle = glue("around the announced earnings report,
-                            {(Accprd + days(1)) %m+% months(-3)} to {Accprd}")) %>% 
-        fmt_number(columns = names(eve_tbl_summary) %>% 
-                       `[`(., str_ends(., pattern = statistic)),
-            decimals = 5,
-            suffixing = TRUE) %>% 
-        cols_label()
-    
-}
-
-# generate the tex code or table at console of existing model (regression)
-mod_texreg <- function(df, tex = TRUE, ...) {
-    
-    if (tex == FALSE) {  # display the table on the console
+    # generate a summary table of our variable (feature) by package gt
+    gt_var_sum <- function(statistic) {
         
-        screenreg(df,
-            caption.above = TRUE, dcolumn = TRUE, booktabs = TRUE, 
-            include.ci = FALSE, digits = 3, 
-            override.se = map(df, "statistic"), 
-               ...,) %>%
-        gsub("g_PLS2","group two", ., fixed = TRUE) %>%
-        gsub("g_PLS3","group three", ., fixed = TRUE)
+        eve_tbl_summary %>% 
+            dplyr::select(c("Timeline", "g_PLS") | ends_with(statistic)) %>% 
+            group_by(g_PLS) %>% 
+            gt::gt() %>% 
+            tab_header(
+                title = glue("The {statistic} of explanation variables"),
+                subtitle = glue("around the announced earnings report,
+                                {(Accprd + days(1)) %m+% months(-3)} to {Accprd}")) %>% 
+            fmt_number(columns = names(eve_tbl_summary) %>% 
+                           `[`(., str_ends(., pattern = statistic)),
+                decimals = 5,
+                suffixing = TRUE) %>% 
+            cols_label()
         
-    } else {  # print the tex code of our table
-        
-        texreg(df,
-            caption.above = TRUE, dcolumn = TRUE, booktabs = TRUE, 
-            include.ci = FALSE, digits = 3, 
-            override.se = map(df, "statistic"),
-               ...,) %>%
-        gsub("g\\_PLS2","group two", ., fixed = TRUE) %>%
-        gsub("g\\_PLS3","group three", ., fixed = TRUE)
     }
     
-}   
+    # generate the tex code or table at console of existing model (regression)
+    mod_texreg <- function(df, tex = TRUE, ...) {
+        
+        if (tex == FALSE) {  # display the table on the console
+            
+            screenreg(df,
+                caption.above = TRUE, dcolumn = TRUE, booktabs = TRUE, 
+                include.ci = FALSE, digits = 3, 
+                override.se = map(df, "statistic"), 
+                   ...,) %>%
+            gsub("g_PLS2","group two", ., fixed = TRUE) %>%
+            gsub("g_PLS3","group three", ., fixed = TRUE)
+            
+        } else {  # print the tex code of our table
+            
+            texreg(df,
+                caption.above = TRUE, dcolumn = TRUE, booktabs = TRUE, 
+                include.ci = FALSE, digits = 3, 
+                override.se = map(df, "statistic"),
+                   ...,) %>%
+            gsub("g\\_PLS2","group two", ., fixed = TRUE) %>%
+            gsub("g\\_PLS3","group three", ., fixed = TRUE)
+        }
+        
+    }   
+    
+    # time series regression ====
+    # All models are wrong, but some are useful.
+    # The goal of a model is not to uncover truth, 
+    # but to discover a simple approximation that is still useful.
+    
+    ## trading
+    lm_trd <- function(df, model_type, SE_type = "stata", ...) {
+        
+        if (model_type == "agg") {
+        ### running all data at once (Cluster-Robust Variance)
+        lm_result <- lm_robust(data = df, clusters = g_PLS, se_type = SE_type, ...,
+                formula = AbRet ~ Amplitude + Turnover + Liquidility + Dnshrtrd)
+        } else if (model_type == "lst") {
+        ### running separate by group (list-column)
+        lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                formula = AbRet ~ Amplitude + Turnover + Liquidility + Dnshrtrd)
+        } else if (model_type == "inter") {
+        ### take the group information as the interaction
+        lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                formula = AbRet ~ (Amplitude + Turnover + Liquidility + Dnshrtrd) * g_PLS)
+        } else stop("Please select a model correctly!")
+        
+        return(lm_result)
+    }
+    
+    ## factor
+    #### owing the values of dependent and explanation variables of any stock
+    #### within a group at every tau is same with others, 
+    #### so we just need to run one regression for all stocks at this part
+    lm_ff <- function(df, ts_type, model_type, SE_type = "stata", ...) {
+        
+        if (ts_type == "t") {  ### take the calendar date as the time line
+    
+            if (model_type == "agg") {  ### aggregate
+                    lm_result <- lm_robust(data = df, clusters = g_PLS, se_type = SE_type,
+                            formula = AbRet ~ AMD_t, ...)
+            } else if (model_type == "lst") {  ### separate by group (list-column)
+                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                            formula = AbRet ~ AMD_t)
+            } else if (model_type == "inter") {  ### interaction with group relationship
+                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                            formula = AbRet ~ AMD_t * g_PLS)
+            } else stop("Please select a model correctly!")
+            
+        } else if (ts_type == "tau") {  
+            ### take the tau (be front of the event happened date) as the time line
+            
+            if (model_type == "lst") {  ### separate by group (list-column)
+                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                            formula = AR_tau ~ AMD_tau)
+            } else if (model_type == "inter") {  ### interaction with group relationship
+                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                            formula = AR_tau ~ AMD_tau * g_PLS)
+            } else stop("Please select a model correctly!")
+            
+        } else stop("Please select a correct time series type!")
+        
+        return(lm_result)
+    }
+    
+    # cross-sectional regression ====
+    ## factor and trading explanation are combined
+    lm_cs <- function(df, model_type, SE_type = "stata", ...) {
+        
+        if (model_type == "grp") { # interact with group (list-column)
+                lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                    formula = AbRet ~ (AMD_t * g_PLS) + Turnover + Liquidility + Dnshrtrd)
+        } else if (model_type == "tlm") { # interact with time line (aggregate)
+                lm_result <- lm_robust(data = df, se_type = SE_type, ..., # clusters = g_PLS,
+                    formula = AbRet ~ (AMD_t * Timeline) + Turnover + Liquidility + Dnshrtrd)
+        } else if (model_type == "gt") { # interact with time line and group (aggregate)
+                lm_result <- lm_robust(data = df, se_type = SE_type, ...,
+                    formula = AbRet ~ AMD_t + AMD_t:Timeline + AMD_t:Timeline:g_PLS + 
+                                        Turnover + Liquidility + Dnshrtrd)
+        } else stop("Please select a model correctly!")
+            
+        return(lm_result)
+    }
 
-
-# read and tidy data ----------------------------------------------------
-# Specifying basic term 
-Accprd <- ymd('2017-09-30')
+    
+# Specifying the basic data attributes -------------------------------------
+Accprd <- ymd('2017-03-31')
 Modeltype <- as.character('CH3')
 Pretype <- 6L
 Markettype <- 21L
-# If we just want to analysis a part of sample?
-# subsam <- 300L
 subsam <- FALSE
 
-setwd( file.path('~/OneDrive/Data.backup/QEAData', Modeltype, year(Accprd)) )
+# read and tidy data ----------------------------------------------------
+setwd(file.path('~/OneDrive/Data.backup/QEAData', Modeltype, year(Accprd)))
 # export directory
 datdir <- file.path(getwd(), Accprd)
-
 # PLS result
 PLSclus <- '~/OneDrive/Data.backup/QEAData/Matlab_PLS' %>% 
-        file.path(paste("group", Accprd, Pretype, Markettype,
-                        'CH3.csv', sep = '_')) %>% 
+        file.path(., dir(path = ., 
+            pattern = paste("group", Accprd, Pretype, Markettype, sep = '_'))) %>% 
         read_csv(col_types = cols( g_PLS = col_factor() ))
-
 # the number of groups by PLS (su, 2016)
 grp_num <- PLSclus$g_PLS %>% levels() %>% length()
 # re-level the order of group levels
 PLSclus$g_PLS %<>% fct_relevel( as.character(1:grp_num) )
-
-if (grp_num == 2) {
+# rename the group names rather than the integers
+if (grp_num == 2L) {
     grp_name <- c("group one", "group two")
-} else if (grp_num == 3)  {
+} else if (grp_num == 3L)  {
     grp_name <- c("group one", "group two", "group three")
-} else if (grp_num == 4) {
+} else if (grp_num == 4L) {
     grp_name <- c("group one", "group two", "group three", "group four")
 } else print("The group number is not included in script!")
-
 # Import the daily trading data (with explanation factors) within event window
 stkeve <- mod_read("stkeve") %>% split(.$Stkcd)
 if (is.numeric(subsam)) { 
@@ -125,7 +195,6 @@ if (is.numeric(subsam)) {
     stk_sam <- names(stkeve)
     print("We will analysis the whole sample.")
 }
-
 # the number of stocks in our sample this quarter
 N <- length(stkeve)
 # the length of estimate window
@@ -135,12 +204,13 @@ TS <- nrow(stkeve[[N]])
 ## if you want, Change the values of TS manually
 timeline <- (-(TS - 1L) / 2):((TS - 1L) / 2)
 
-# read the original daily trading data
-QEA_db <- dbConnect(SQLite(), "../../QEA_db.sqlite")
-
+# read the original daily trading data ====
+# to speed up the procession, we take a restrict on trading date
 qtr_term <- seq(as.numeric(Accprd %m+% months(-9)), 
-                 as.numeric(Accprd %m+% months(+9)), 
-                 by = 1)
+                as.numeric(Accprd %m+% months(+9)), 
+                by = 1)
+# link to the SQLite database
+QEA_db <- dbConnect(SQLite(), "../../QEA_db.sqlite")
 # Import the daily trading in China A-Share markets
 trddat <- tbl(QEA_db, "daily") %>% 
         # subset the stocks in our quarterly sample
@@ -161,7 +231,6 @@ trddat %<>% split(.$Stkcd) %>%
 # Import quarterly accounting data
 qtr_term <- c((Accprd + days(1)) %m+% months(-6) + days(-1), 
               (Accprd + days(1)) %m+% months(-3) + days(-1))
-
 Acc_ind <- tbl(QEA_db, "quarter") %>%
         # subset the stocks in our quarterly sample
         filter(`&`(Stkcd %in% !!stk_sam,
@@ -253,8 +322,8 @@ eve_tbl_summary <- group_by(eve_tbl, Timeline, g_PLS) %>%
                      .funs = list(~mean(., na.rm = TRUE), ~var(., na.rm = TRUE)) 
                      )
 
-gt_var_sum("var")
-gt_var_sum("mean")
+# gt_var_sum("var")
+# gt_var_sum("mean")
 
 
 # plot the standard deviation of returns ====
@@ -283,7 +352,8 @@ subtitle = glue('accounting period: {(Accprd + days(1)) %m+% months(-3)} to {Acc
 mod_figure("Dret_sd", 3L, 1)
 
 
-# Regression (statistical properties) -------------------------------------
+
+# statistical properties -------------------------------------------------
 
 # which accounting index is used to structure the group?
 g_Acc <- "Erana"
@@ -335,68 +405,7 @@ subtitle = glue("Grouped by {g_Acc}, {(Accprd + days(1)) %m+% months(-3)} to {Ac
 mod_figure("Diff", 3L, 1)
 
 
-
-# Time series - Ordinary Least Squares with Robust Standard Errors ---------
-
-    ## trading
-    lm_trd <- function(df, model_type, SE_type = "stata", ...) {
-        
-        if (model_type == "agg") {
-        ### running all data at once (Cluster-Robust Variance)
-        lm_result <- lm_robust(data = df, clusters = g_PLS, se_type = SE_type, ...,
-                formula = AbRet ~ Amplitude + Turnover + Liquidility + Dnshrtrd)
-        } else if (model_type == "lst") {
-        ### running separate by group (list-column)
-        lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                formula = AbRet ~ Amplitude + Turnover + Liquidility + Dnshrtrd)
-        } else if (model_type == "inter") {
-        ### take the group information as the interaction
-        lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                formula = AbRet ~ (Amplitude + Turnover + Liquidility + Dnshrtrd) * g_PLS)
-        } else stop("Please select a model correctly!")
-        
-        return(lm_result)
-    }
-
-
-    ## factor
-    #### owing the values of dependent and explanation variables of any stock
-    #### within a group at every tau is same with others, 
-    #### so we just need to run one regression for all stocks at this part
-    lm_ff <- function(df, ts_type, model_type, SE_type = "stata", ...) {
-        
-        if (ts_type == "t") {  ### take the calendar date as the time line
-    
-            if (model_type == "agg") {  ### aggregate
-                    lm_result <- lm_robust(data = df, clusters = g_PLS, se_type = SE_type,
-                            formula = AbRet ~ AMD_t, ...)
-            } else if (model_type == "lst") {  ### separate by group (list-column)
-                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                            formula = AbRet ~ AMD_t)
-            } else if (model_type == "inter") {  ### interaction with group relationship
-                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                            formula = AbRet ~ AMD_t * g_PLS)
-            } else stop("Please select a model correctly!")
-            
-        } else if (ts_type == "tau") {  
-            ### take the tau (be front of the event happened date) as the time line
-            
-            if (model_type == "lst") {  ### separate by group (list-column)
-                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                            formula = AR_tau ~ AMD_tau)
-            } else if (model_type == "inter") {  ### interaction with group relationship
-                    lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                            formula = AR_tau ~ AMD_tau * g_PLS)
-            } else stop("Please select a model correctly!")
-            
-        } else stop("Please select a correct time series type!")
-        
-        return(lm_result)
-    }
-
-
-# Calculate the factor AMD ------------------------------------------------
-
+# Calculate the factor AMD 
 ## trading date
 AMD_t <- bind_rows(trddat) %>% 
     select(Stkcd, TradingDate, Dretnd, Dsmvosd) %>% 
@@ -428,20 +437,18 @@ AMD_tau <- inner_join(eve_tbl, g_AMD, by = "Stkcd") %>%
     spread(g.AMD, avgDret) %>% 
     mutate("AMD_tau" = Ascend - Descend) %>% 
     select(Timeline, AMD_tau) 
-
 ### group by time-line and g_PLS classification result
 AR_tau <- group_by(eve_tbl, g_PLS, Timeline) %>% 
     ## calculate the AR_tau 
     summarise("AR_tau" = AbRet %*% (Dsmvosd / sum(Dsmvosd)), .groups = "keep")
 
-# merge the factor AMD with regression data
+# merge the factor AMD with regression data ====
 eve_tbl %<>% left_join(AMD_t, by = "TradingDate") %>% 
     left_join(AMD_tau, by = "Timeline") %>% 
     left_join(AR_tau, by = c("Timeline", "g_PLS"))
 
 
-# Running time series regression ------------------------------------------
-
+# Time series - Ordinary Least Squares with Robust Standard Errors ---------
 eve_clst_grp <- group_nest(eve_tbl, g_PLS) %>%
     ## factor
     mutate("ts_ff_t" = map(data, lm_ff, ts_type = "t", model_type = "lst")) %>%
@@ -449,45 +456,44 @@ eve_clst_grp <- group_nest(eve_tbl, g_PLS) %>%
     mutate("ts_trd" = map(data, lm_trd, model_type = "lst")) # %>%
     # mutate("ts_trd_resids" = map2(data, ts_trd, add_residuals)) 
 
-
-## table - trading explanation
-tbl_ts_trd <- list(lm_trd(eve_tbl, model_type = "agg"),  # aggregate
-                   eve_clst_grp$ts_trd,  # separate by group
-                   lm_trd(eve_tbl, model_type = "inter")  # ads group interaction
-                   ) %>% flatten() 
-
-mod_texreg(tbl_ts_trd, tex = TRUE, 
+# generate regression results table ====
+    ## trading explanation
+    list(lm_trd(eve_tbl, model_type = "agg"),  # aggregate
+           eve_clst_grp$ts_trd,  # separate by group
+           lm_trd(eve_tbl, model_type = "inter")  # ads group interaction
+           ) %>% 
+        flatten() %>% 
+        mod_texreg(tex = TRUE, 
            custom.header = list("Abnormal Return (t)" = 1:5),
            custom.model.names = c("Unclassified", grp_name, "inter-group"),
            reorder.coef = c(1, 6, 7, 2:5, seq(8, 15, 2), seq(9, 15, 2))
-           ) %>% 
-    cat()
-
-
-## table - factor explanation - t
-tbl_ts_ff_t <- list(lm_ff(eve_tbl, ts_type = "t", model_type = "agg"),  
-                    eve_clst_grp$ts_ff_t,
-                    lm_ff(eve_tbl, ts_type = "t", model_type = "inter")
-                    ) %>% flatten()
-
-mod_texreg(tbl_ts_ff_t, tex = TRUE, 
-           custom.header = list("Abnormal Return (t)" = 1:5),
-           custom.model.names = c("Unclassified", grp_name, "inter-group"))
-
-
-## table - factor explanation - tau
-tbl_ts_ff_tau <- inner_join(AR_tau, AMD_tau, by = "Timeline") %>% 
-    group_by(g_PLS) %>% nest() %>% 
-    transmute("ts_ff_tau" = map(data, lm_ff, ts_type = "tau", model_type = "lst")) %>%
-    pluck("ts_ff_tau") %>% 
-    list(., lm_ff(inner_join(AR_tau, AMD_tau, by = "Timeline"), 
-                  ts_type = "tau", model_type = "inter")
-         ) %>% flatten()
+           ) %>% cat()
     
-mod_texreg(tbl_ts_ff_tau, tex = TRUE, 
-           custom.header = list("Abnormal Return (tau)" = 1:4),
-           custom.model.names = c(grp_name, "inter-group"))
-     
+    ## factor explanation - t
+    list(lm_ff(eve_tbl, ts_type = "t", model_type = "agg"),  
+            eve_clst_grp$ts_ff_t,
+            lm_ff(eve_tbl, ts_type = "t", model_type = "inter")
+            ) %>% 
+        flatten() %>% 
+        mod_texreg(tex = TRUE, 
+                   custom.header = list("Abnormal Return (t)" = 1:5),
+                   custom.model.names = c("Unclassified", grp_name, "inter-group")
+                   ) %>% cat()
+    
+    ## factor explanation - tau
+    inner_join(AR_tau, AMD_tau, by = "Timeline") %>% 
+        group_by(g_PLS) %>% nest() %>% 
+        transmute("ts_ff_tau" = map(data, lm_ff, ts_type = "tau", model_type = "lst")) %>%
+        pluck("ts_ff_tau") %>% 
+        list(., lm_ff(inner_join(AR_tau, AMD_tau, by = "Timeline"), 
+                      ts_type = "tau", model_type = "inter")
+             ) %>% 
+        flatten() %>% 
+        mod_texreg(tex = TRUE, 
+                   custom.header = list("Abnormal Return (tau)" = 1:4),
+                   custom.model.names = c(grp_name, "inter-group")
+                   ) %>% cat()
+         
 
     # stock dimension - trading
     group_nest(eve_tbl, g_PLS, Stkcd) %>% 
@@ -508,23 +514,6 @@ mod_texreg(tbl_ts_ff_tau, tex = TRUE,
 
     
 # Cross-sectional ---------------------------------------------------------
-    ## factor and trading explanation are combined
-    lm_cs <- function(df, model_type, SE_type = "stata", ...) {
-        
-        if (model_type == "grp") { # interact with group (list-column)
-                lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                    formula = AbRet ~ (AMD_t * g_PLS) + Turnover + Liquidility + Dnshrtrd)
-        } else if (model_type == "tlm") { # interact with time line (aggregate)
-                lm_result <- lm_robust(data = df, se_type = SE_type, ..., # clusters = g_PLS,
-                    formula = AbRet ~ (AMD_t * Timeline) + Turnover + Liquidility + Dnshrtrd)
-        } else if (model_type == "gt") { # interact with time line and group (aggregate)
-                lm_result <- lm_robust(data = df, se_type = SE_type, ...,
-                    formula = AbRet ~ AMD_t + AMD_t:Timeline + AMD_t:Timeline:g_PLS + 
-                                        Turnover + Liquidility + Dnshrtrd)
-        } else stop("Please select a model correctly!")
-            
-        return(lm_result)
-    }
 
 # re-level the time line (take the tau = 0 as benchmark in regression) 
 eve_tbl$Timeline %<>% fct_relevel(as.character(c(0, timeline[-(TS+1L)/2L])))
@@ -550,9 +539,10 @@ for (i in seq_len(length(qtr_term)-1)) {
     tex_cs <- gsub(x = tex_cs,
         pattern = c("Timeline.L", "Timeline.Q", "Timeline.C", 
             "Timeline[:$:][:^:]4[:$:]", "Timeline[:$:][:^:]5[:$:]", "Timeline[:^:]6")[i],
-        replacement = str_c("tau = ", qtr_term)[c(1:3,5:7)][i])
+        replacement = str_c("tau = ", qtr_term)[c(1:3,5:7)][i]) 
 }
 
+cat(tex_cs)
 
 # model visualization -----------------------------------------------------
     ## plot the estimate value in path and point form

@@ -39,9 +39,8 @@
 # its outstanding A shares, including non-tradable shares,
 # product its daily closing price at present.
 # 
-# Note that daily value-weighted returns on the six portfolios
-# are calculated from 'q' quarter to 'q+1' quarter
-# using available accounting data produced at quarter 'q-1'.
+# Note that daily value-weighted returns of the six portfolios at quarter 'q'
+# are calculated using the available accounting data produced at quarter 'q-1'.
 
 library(tidyverse)
 library(lubridate)
@@ -56,9 +55,38 @@ library(DBI)
 library(RSQLite)
 library(dbplyr)
 
+# Fama-French multiple-factor model
+lm_CH3 <- function(df, ...) lm(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG, 
+                               data = df, ...)
+lm_FF5 <- function(df, ...) lm(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG + RMW + CMW, 
+                               data = df, ...)
 
-# Part I, import data -----------------------------------------------------
 
+# Part I, assign the basic parameter -------------------------------------
+# set the type of multi-factor model
+# yearly-FF5 (Fama-French, 2015), quarterly-CH3 (Liu, 2018)
+model_type <- "CH3"
+# set the type of Value: EPS, BVPS, or CFPS
+Value_type <- "EPS"
+# That is we could select a index from these three accounting indicator 
+# as the cluster standard of factor `Value` in multi-factor model
+# EPS: earnings-to-price; BVPS: book-to-market (equity)
+# CFPS: the radio of cash flow to closing price
+# set the quarter term
+len_term <- 12L
+start_term <- ymd('2016-03-31')
+## 03-31, the first quarter; 06-30, the second quarter 
+## 09-30, the third quarter; 12-31, the fourth quarter
+if (model_type == "CH3") {
+        Accprd <- months(seq(0, by = 3, length = len_term)) 
+} else if (model_type == "FF5") {
+        Accprd <- years(seq(0, by = 1, length = len_term)) 
+} 
+Accprd %<>% mapply('%m+%', start_term, .) %>% as.Date(origin = '1970-01-01') 
+
+
+
+# Part II, import data -----------------------------------------------------
 # working directory
 setwd('~/OneDrive/Data.backup/QEAData/')
 # link to SQLite database
@@ -96,7 +124,7 @@ AF_Co <- read_delim('AF_Co.csv', delim = '\t', na = '',
         # published by China Securities Regulatory Commission 
         filter(IndClaCd == 2) %>% select(-IndClaCd) 
 # take a look 
-count(AF_Co, year = str_sub(Listdt, 1, 4), Industry = str_sub(Indus, 1, 1)) %>% 
+count(AF_Co, year = year(Listdt), Industry = str_sub(Indus, 1, 1)) %>% 
         ggplot() +
         geom_col(aes(x = year, y = n, fill = Industry)) +
         labs(x = "Year", y = "The count of firms listed in this year") +
@@ -152,64 +180,25 @@ save.image('./CH3/PrePotfol.RData')
 
 
 
-# Part II, reproduce Fama-French multi-factor model -----------------------
-
-# set the type of multi-factor model
-# yearly, FF5 (Fama-French, 2015)
-# quarterly, CH3 (Liu, 2018)
-model_type <- "CH3"
-
-# set the type of Value: EPS, BVPS, or CFPS
-# That is we could select a index from these three accounting indicator 
-# as the cluster standard of factor `Value` in multi-factor model
-# EPS: earnings-to-price
-# BVPS: book-to-market (equity)
-# CFPS: the radio of cash flow to closing price
-Value_type <- "EPS"
-
-# set the quarter term
-# Notice that we should set `two quarters ahead`
-# to structure the invest portfolio at current quarter 
-len_term <- 12L
-start_term <- ymd('2016-03-31')
-
-
-# accounting periods we want to process
-if (model_type == "CH3") {  # quarterly
-    
-        Accprd <- months(seq(0, by = 3, length = len_term)) %>% 
-                mapply('%m+%', start_term, .) %>% 
-                as.Date(origin = '1970-01-01') 
-        
-} else if (model_type == "FF5") {
-    
-        Accprd <- years(seq(0, by = 1, length = len_term)) %>% 
-                mapply('+', start_term, .) %>% 
-                as.Date(origin = '1970-01-01')
-        
-}
-
-# Fama-French multiple-factor model
-lm_CH3 <- function(df) lm( I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG, data = df)
-lm_FF5 <- function(df) lm( I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG + RMW + CMW, data = df)
-
+# Part III, reproduce Fama-French multi-factor model -----------------------
 # create lists to store our results
 potfolreg <- vector(mode = 'list', length = length(Accprd)) %>% 
     set_names(Accprd)
 
-
 for (q in 1:length(Accprd)) { # loop in quarter
 
-# It is rational that investors make decision according to accounting index
-# in earnings report of quarter `q-2`, they known recently,  at the begining of quater `q`. 
-# so we using the accounting indicators at `q-2` to structure portfolios at quarter `q`
+# It is rational that the investors make decisions according to 
+# the accounting indicators in earnings report they known recently. 
+# At the beginning of quarter `q`, they know the information of quarter `q-2`.
+# But for explanation maximize, we use the accounting indicators at `q-1` 
+# to structure portfolios and explanation factors at quarter `q`.
     
     print(Accprd[q])
     
     if (model_type == "CH3") {
             # seeking the fundamental accounting status of stocks at quarter t-2
             # to structure current quarter portfolio
-            splday <- ahdqua <- (Accprd[q] + days(1)) %m+% months(-6) + days(-1)
+            splday <- ahdqua <- (Accprd[q] + days(1)) %m+% months(-3) + days(-1)
     } else if (model_type == "FF5") {
             # using the accounting indicator at year y-1
             # to structure current year portfolio
@@ -218,7 +207,7 @@ for (q in 1:length(Accprd)) { # loop in quarter
     
     # c(1:7), Mon < Tue < Wed < Thu < Fri < Sat < Sun
     wday(splday, label = TRUE, week_start = getOption("lubridate.week.start", 1))
-    # we need to confirm that the trade dates in differents China A-share makets are same
+    # we need to confirm that the trade dates in different China A-share markets are same
     while (!splday %in% trdday) splday <- splday + days(-1)
     
     # eliminate stocks to enable reasonable precision and power ====
@@ -363,13 +352,13 @@ for (q in 1:length(Accprd)) { # loop in quarter
     
     # mkt_rf, the returns of market risk subtracted risk-free rate of that day 
     trdff_x %<>% mutate("mkt_rf" = map_dbl(data, 
-            ~ with(.x, (Dsmvosd / sum(Dsmvosd)) %*% Dretnd - unique(Nrrdaydt)))) 
+            ~ with(.x, Dretnd %*% (Dsmvosd / sum(Dsmvosd)) - unique(Nrrdaydt)))) 
     
     
     # calculate the weighted returns of different portfolios
     trdff_x %<>% mutate("Portfolio.Ret" = map(data, 
-                    ~ summarise(.x, Ret = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), .groups = 'keep'))
-                    )
+            ~ summarise(.x, "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), .groups = 'keep'))
+            )
     
     if (model_type == "CH3") {
             
@@ -494,7 +483,8 @@ for (q in 1:length(Accprd)) { # loop in quarter
 save(potfolreg, file = glue("./CH3/Hu-CH3.RData"))
 dbDisconnect(QEA_db); rm(QEA_db)
 
-# visualizing the factor value --------------------------------------------
+
+# Part IV, visualizing the factor by month ----------------------------------
 Accprd.year <- unique(year(Accprd))
 
 for (i in seq_along(Accprd.year)) {
@@ -526,26 +516,10 @@ for (i in seq_along(Accprd.year)) {
 }
 
 
-
-library(knitr)
-library(kableExtra)
-
 # table - portfolio estimates
 map_dfr(potfolreg, unnest, cols = c("Coef"), .id = "quarter") %>% 
     select(-c(data:lm_CH3_result)) %>% 
-        group_by(quarter, g.SMB, g.VMG) %>% 
-        DT::datatable(rownames = FALSE)
+        DT::datatable(rownames = FALSE) %>% 
+        DT::formatRound(columns=c('estimate', 'std.error', 'statistic', 'p.value'), 
+                        digits=3)
 
-
-# factors
-# map(potfolreg, "data") %>% flatten_dfr() %>% select(- ptf_Ret) %>% unique.data.frame()
-map(potfolreg, "data") %>% 
-        # the factors data are same among portfolios every quarter, we just need one 
-        map_dfr(`[`(1L)) %>%
-        select(-c("ptf_Ret", "Nrrdaydt")) %>% # %>% gt::gt() 
-        mutate("TradingDate" = format(TradingDate, "%Y-%m")) %>% 
-        group_by(TradingDate) %>% 
-        summarise_if(is.numeric, .funs = mean) %>% 
-        # as.data.frame() %>% stargazer(rownames=FALSE)
-        kable("latex", booktabs = T, longtable = T) %>% 
-        kable_styling(latex_options = c("repeat_header"), position = "center")

@@ -12,15 +12,6 @@ library(multipanelfigure)
 library(RColorBrewer)
 library(ggthemes)
 
-
-# Part I, Preparation -----------------------------------------------------
-
-# the color of category data used for plotting
-qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
-col_vector <- mapply(brewer.pal, 
-                     qual_col_pals$maxcolors, rownames(qual_col_pals)
-                     ) %>% unlist()
-
 # establish a function to extract daily trading data of specific time range
 ## there maybe exist a bug at *****, but I am lazy to repair it.
 ## This function is enough to extract our desired window data 
@@ -48,6 +39,15 @@ mod_extract <- function(df, behind, ahead, type) {
 } 
 
 
+# Part I, Preparation -----------------------------------------------------
+
+## our desired accounting period around quarterly earnings report
+len_term <- 4L
+start_term <- ymd('2017-03-31')
+Accprd <- months(seq(0, by = 3, length = len_term)) %>% 
+        mapply('%m+%', start_term, .) %>% 
+        as.Date(origin = '1970-01-01') 
+
 # Assign the window time index ====
 exwind <- -160L
 bhwind <- +160L 
@@ -73,44 +73,37 @@ bhwindeve <- +30L
 # Note that we discard ten (two weeks) daily trading data before announcement date
 # and ten (two weeks) daily trading data after announcement date.
 
+# set up the market type
+# 1=SHA, 4=SZA, 16=start-up, 5=1+4, 21=1+4+16
+M <- 21L 
+# select stocks whether had published ex-earnings report or not
+Pretype <- 6L
+## 0, select the companies that released the **performance forecast**
+## 1, Select the companies that issued the **Regular Announcement**
+## 2, Select the enterprises that has published information (pre-announcement or announcement), 
+##    that is, the sum of the two types of enterprises, 0 and 1.
+## 3, Select the enterprises that has no previous information release, 
+##    that is, remove the 0 and 1 enterprises from the total sample.
+## 4, Remove the companies that released the performance forecast in the total sample
+## 5, Remove the companies that published regular announcements in the total sample
+## If including all of stocks, enter 6 (actually, all numbers except above is OK)
+
 
 # setup the working directory 
 setwd('~/OneDrive/Data.backup/QEAData/')
-## our desired accounting period around quarterly earnings report
-len_term <- 4L
-start_term <- ymd('2017-03-31')
-
-Accprd <- months(seq(0, by = 3, length = len_term)) %>% 
-        mapply('%m+%', start_term, .) %>% 
-        as.Date(origin = '1970-01-01') 
-## 03-31, the first quarter; 06-30, the second quarter 
-## 09-30, the third quarter; 12-31, the fourth quarter 
-## for example, 2018-12-31 meanings that
-## we focus on the fourth quarter of year 2018
-
-# set up the market type
-M <- c(21L) 
-# 1=SHA, 4=SZA, 16=start-up
-# 5=1+4, 21=1+4+16
-
-# Import the data tidy in previous script
-# including daily trading data of stocks, trading date of China A-share markets,
-# and Fama-French factors (CH3)
-load('./CH3/PrePotfol.RData')
-load('./CH3/Hu-CH3.RData')
-
 # export directory, must be one year at there
 datdir <- year(Accprd) %>% unique() %>% 
         file.path(getwd(), "CH3", .)
 if (!dir.exists(datdir)) dir.create(datdir)
-
-# extract the CH3 factor ====
+# Import the data tidy in previous script =====
+# including daily trading data of stocks, trading date of China A-share markets,
+# and Fama-French factors (CH3)
+load('./CH3/PrePotfol.RData')
+load('./CH3/Hu-CH3.RData')
+# extract the CH3 factor
 CH3_factor <- map(potfolreg, "data") %>% 
 # the factors are same among portfolios in every quarter, we just need one 
-        map(`[`(1L)) %>% 
-        bind_rows() %>% 
-        select(-ptf_Ret)
-
+        map_dfr(`[`(1L)) %>% select(-ptf_Ret)
 
 # Import the status data of quarterly financial report 
 ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', delim = '\t', na = '',
@@ -128,8 +121,7 @@ ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', delim = '\t', na = '',
                  # net profits and earnings per share
                  Profita = col_double(), Erana = col_double()
                  )
-         ) 
-
+         )
 # we could observe that the symbols of stocks belong to China A-Share markets
 # are begin with number c(0, 3, 6),
 # so we use regular expression and string function 'grepl' to filter others 
@@ -155,18 +147,11 @@ PreRept <- read_delim('./Acc_Quarter/FIN_F_ForecFin.txt',
         filter(AccPeriod %in% Accprd) %>% 
         filter(grepl('^[0-6]', Stkcd))
 
-# select stocks whether had published ex-earnings report or not
-Pretype <- 6L
-## 0, select the companies that released the **performance forecast**
-## 1, Select the companies that issued the **Regular Announcement**
-## 2, Select the enterprises that has published information (pre-announcement or announcement), 
-##    that is, the sum of the two types of enterprises, 0 and 1.
-## 3, Select the enterprises that has no previous information release, 
-##    that is, remove the 0 and 1 enterprises from the total sample.
-## 4, Remove the companies that released the performance forecast in the total sample
-## 5, Remove the companies that published regular announcements in the total sample
-## If including all of stocks, enter 6 (actually, all numbers except above is OK)
-
+# the color of category data used for plotting
+qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector <- mapply(brewer.pal, 
+                     qual_col_pals$maxcolors, rownames(qual_col_pals)
+                     ) %>% unlist()
 
 
 # Part II, extract specific time period trading data ----------------------
