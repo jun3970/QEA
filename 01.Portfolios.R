@@ -5,7 +5,7 @@
 #
 # The return is positive correlation with risk.
 # To explanation the cross-sectional variation of the daily returns of stocks,
-# we construct multiple factors mimicking the risk of some accounting dimensions in firm.
+# we construct multiple factors to mimic the risk of firm operating.
 #
 # MKT_RF (CAPM)
 # The market risk factor, MKT_RF, is the return on the systemic invest risk
@@ -65,7 +65,7 @@
 # The value of factors is the difference risk returns among diversified portfolios,
 # constructed by taking intersect of portfolios in different dimension.
 # 
-# three factor model: R_rf ~ mkt_rf + SMB + VMG
+# three factor model: R_rf ~ mkt_rf + SMB + VMG ====
 #
 # SMB = 1/3 (Small Value + Small Neutral + Small Growth) –
 #       1/3 (Big Value + Big Neutral + Big Growth)
@@ -73,7 +73,7 @@
 # VMG = 1/2 (Small Value + Big Value) –
 #       1/2 (Small Growth + Big Growth)
 #
-# four factor model: R_rf ~ mkt_rf + SMB + VMG + RMW
+# four factor model: R_rf ~ mkt_rf + SMB + VMG + RMW ====
 #
 # SMB_Value = 1/3 (Small Value + Small Neutral + Small Growth) –
 #       1/3 (Big Value + Big Neutral + Big Growth)
@@ -86,7 +86,7 @@
 # RMW = 1/2 (Small Robust + Big Robust) –
 #       1/2 (Small Weak + Big Weak)
 #
-# Fama-French five factor model: R_rf ~ mkt_rf + SMB + VMG + RMW + CMA
+# Fama-French five factor model: R_rf ~ mkt_rf + SMB + VMG + RMW + CMA ====
 #
 # SMB_Investment = 1/3 (Small Aggressive + Small Neutral + Small Conservative) –
 #       1/3 (Big Aggressive + Big Neutral + Big Conservative)
@@ -104,6 +104,9 @@
 # in accounting report at quarter `q-1`, the meanings of the multiple factor 
 # model is to explain the variance of cross-sectional returns of stocks.
 # but if we using the data in quarter `q-2`, the aim is to make forecasting.
+# It is rational that the investors make decisions according to 
+# the accounting indicators in earnings report they known recently. 
+# At the beginning of quarter `q`, they know the information of quarter `q-2`.
 
 library(tidyverse)
 library(lubridate)
@@ -111,684 +114,787 @@ library(magrittr)
 
 library(glue)
 library(broom)
-library(gt)
-library(RColorBrewer)
 
 library(DBI)
 library(RSQLite)
 library(dbplyr)
 
+library(RColorBrewer)
+
 # Fama-French multiple-factor model
-lm_ff <- function(ff_class = "CH3", df, ...){
+lm_ff <- function(ff_class = "CH3", df, ...) {
     
-    if(ff_class == "CH3") {
-        ff_formula <- as.formula(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG)
+    if(ff_class == "CAPM") {
+        
+        model_formula <- as.formula(I(Dretnd - Nrrdaydt) ~ mkt_rf)
+        
+    } else if(ff_class == "CH3") {
+        
+        model_formula <- as.formula(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG)
+        
     } else if(ff_class == "CH4") {
-        ff_formula <- as.formula(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG + RMW)
+        
+        model_formula <- as.formula(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + VMG + RMW)
+        
     } else if(ff_class == "FF5") {
-        ff_formula <- as.formula(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + HML + RMW + CMA)
+        
+        model_formula <- as.formula(I(ptf_Ret - Nrrdaydt) ~ mkt_rf + SMB + HML + RMW + CMA)
+        
     }
     
-    return(lm(formula = ff_formula, data = df, ...))
+    return(lm(formula = model_formula, data = df, ...))
 }
+
+# function to query accounting data in reports from SQLite database
+# the argument, report_type, represent the type of earnings report
+# A, union report of institution, B, the parent company
+tbl_query <- function(database = QEA_db, table_name, 
+                      report_type = "A", 
+                      date = ahead_period, stkcd = trdwin
+                      ) {
+
+    tbl(database, table_name) %>% 
+            filter(Accper %in% !!as.integer(date)) %>% 
+            filter(Stkcd %in% !!names(stkcd)) %>% 
+            filter(Typrep == report_type) 
+    
+}
+
+# change a new value to the default argument for a function
+cut <- purrr::partial(cut, ordered_result = TRUE, include.lowest = TRUE)
+summarise <- purrr::partial(summarise, .groups = 'drop')
 
 
 # Part I, assign the basic parameter -------------------------------------
 
-# set the type of multi-factor model ====
-model_type <- "CH3"
-# yearly -- FF5 (Fama-French, 2015), quarterly -- CH3 & CH4 (Liu, 2018)
+# set the type of multi-factor model
+# CAPM, CH3 (Liu, 2018), CH4, CH5 (Fama-French, 2015)
+model_type <- "CH4"
 
-# set the type of Value: EPS, or CFPS ====
-value_base <- "CFPS"
-# we could select a index from three accounting indicators
-# as the cluster standard of factor `Value` in multi-factor model,
-# EPS: earnings-to-price; CFPS: the radio of cash flow to closing price
+# set the type of interval of time period, yearly or quarterly?
+period_type <- "quarterly"  
 
-# Forecasting or explanation? ====
-ahead_quarter <- 1L
-# We should using how many quarter ahead accounting reports information 
-# to structure current quarter portfolio?
-# one ahead for explanation, two ahead for forecasting
-
-# set the quarter term ====
-len_term <- 1L
-start_term <- ymd('2013-03-31')
+# set the time period term
+# how much accounting periods will be running?
+len_term <- 4*9
+# the ending date of the first accounting period
+start_term <- ymd('2010-03-31')
 ## 03-31, the first quarter; 06-30, the second quarter 
 ## 09-30, the third quarter; 12-31, the fourth quarter
 
+# set the type of Value: EPS, or CFPS
+# EPS: earnings-to-price; 
+# CFPS: the radio of cash flow per share to closing price
+value_base <- "EPS"
+
+# Forecasting or explanation?
+# one ahead for explanation, two ahead for forecasting
+ahead_quarter <- 1L
 
 # Part II, replicate Fama-French multi-factor model -----------------------
 
 # working directory
 setwd('~/OneDrive/Data.backup/QEAData/')
-# import data
-load(file = "./PrePotfol.RData")
-# create directory to save script results
-if (!dir.exists(file.path(model_type, "figure_portfolio_return"))) {
-        dir.create(file.path(model_type, "figure_portfolio_return"))
-} 
 # link to database
 QEA_db <- dbConnect(RSQLite::SQLite(), "./QEA_db.sqlite")
-# the regression model and according periods will be running 
+# import data
+load(file = "./PrePotfol.RData")
+        
+# factor terms of regression model
 if (model_type == "CH3") {
+    
         ff_term <- c("SMB", "VMG")
-        Accprd <- months(seq(from = 0, by = 3, length = len_term)) 
+        
 } else if (model_type == "CH4") {
+    
         ff_term <- c("SMB", "VMG", "RMW")
-        Accprd <- months(seq(from = 0, by = 3, length = len_term)) 
+        
 } else if (model_type == "FF5") {
+    
         ff_term <- c("SMB", "HML", "RMW", "CMA")
-        Accprd <- years(seq(from = 0, by = 1, length = len_term)) 
+        
 }
-Accprd %<>% mapply('%m+%', start_term, .) %>% as.Date(origin = '1970-01-01') 
-# create lists to store our results
-potfolreg <- vector(mode = 'list', length = length(Accprd)) %>% 
-        set_names(Accprd)
+# according periods will be running 
+if (period_type == "quarterly"){
+    
+        Accprd <- months(seq(from = 0, by = 3, length = len_term)) %>% 
+                mapply(`%m+%`, start_term, .) %>% 
+                as.Date(origin = '1970-01-01') 
+        
+} else if (period_type == "yearly") {
+    
+        Accprd <- years(seq(from = 0, by = 1, length = len_term)) %>% 
+                mapply(`+`, start_term, .) %>% 
+                as.Date(origin = '1970-01-01') 
+        
+}
+# create lists to store results of multiple time periods
+potfolreg <- vector(mode = 'list', length = length(Accprd)) %>% set_names(Accprd)
+# create directory to save below results as some files
+if (model_type %in% c("CAPM", "FF5")) {
+    
+    if (!dir.exists(model_type)) dir.create(model_type)
+    
+} else if (model_type %in% c("CH3", "CH4")) {
+    
+    if (!dir.exists(file.path(model_type, "figure_portfolio_return"))) {
+            dir.create(model_type)
+            dir.create(file.path(model_type, "figure_portfolio_return"))
+    }
+}
 
-for (q in 1:length(Accprd)) { # loop in quarter
 
-# It is rational that the investors make decisions according to 
-# the accounting indicators in earnings report they known recently. 
-# At the beginning of quarter `q`, they know the information of quarter `q-2`.
-# But for explanation maximize, we use the accounting indicators at `q-1` 
-# to structure portfolios and explanation factors at quarter `q`.
+for (q in seq_along(Accprd)) {  # loop in time period
     
     print(Accprd[q])
     
-    if (model_type %in% c("CH3", "CH4")) {
-            # seeking the fundamental accounting status of stocks 
-            # at ahead quarter to structure current quarter portfolio
-            splday <- ahdqua <- 
+    # set the benchmark date, and we will use the closing price of stocks 
+    # at that date to contract current period portfolios
+    if (period_type == "quarterly") {
+        
+            base_date <- ahead_period <- 
                 (Accprd[q] + days(1)) %m-% months(ahead_quarter * 3L) + days(-1)
-    } else if (model_type == "FF5") {
-            # using the accounting indicator at year y-1
-            # to structure current year portfolio
-            splday <- ahdqua <- Accprd[q] + years(-1)
+            # the starting date of current accounting period
+            starting_point <- (Accprd[q] + days(1)) %m+% months(-3L)
+            
+    } else if (period_type == "yearly") {
+        
+            base_date <- ahead_period <- Accprd[q] + years(-1)
+            
+            starting_point <- ahead_period + days(1)
+            
     }
     
-    while (!splday %in% trdday) splday <- splday + days(-1)
+    while (!base_date %in% trdday) base_date <- base_date + days(-1)
     
+    # to speed up the script running, we strike out the data older than 2008-06-30
+    trdwin <- trddat %>%  
+            mutate(data = map(data, 
+                              filter, 
+                              TradingDate %within% interval(base_date, Accprd[q])
+                              )
+                   ) %>% 
+            unnest(cols = "data") %>% 
+            split(.$Stkcd)
+
     # eliminate stocks to enable reasonable precision and power ====
-    trddat %<>% 
-        keep(~ `>=`(interval(unique(pull(.x, Listdt)), Accprd[q]), 
-                    months(6))  # eliminating the stocks which listed less than six months
-             ) %>% 
-        keep(~ `&`(filter(.x, TradingDate %within% interval(splday + years(-1), splday)) %>% 
-                        nrow() >= 180L,  # less than 180 trading records in the past year
-                   filter(.x, TradingDate %within% interval(splday %m+% months(-1), splday)) %>% 
-                        nrow() >= 15L)  # less than 15 trading records in the past month
-             )
+    
+    # eliminating the stocks which listed less than six months
+    trdwin %<>% keep(~ `>=`(interval(unique(pull(.x, Listdt)), ahead_period), months(6)))
+    
+    if (period_type == "quarterly") {  # less than 15 trading records in the past month
+        
+            trdwin %<>% keep(~ filter(.x, TradingDate %within% 
+                                          interval(Accprd[q] %m+% months(-1), Accprd[q])
+                                      ) %>% 
+                                 nrow() >= 15L
+                             )  
+        
+    } else if (period_type == "yearly") {  # less than 180 trading records in the past year
+        
+           trdwin %<>% keep(~ filter(.x, TradingDate %within% 
+                                         interval(Accprd[q] + years(-1), Accprd[q])
+                                     ) %>% 
+                                nrow() >= 180L
+                            )
+                 
+    }
 
     # import the information of earnings report ====
-    ## There is a shortcoming in this part, we will just select  
-    ## the earnings reports of parent listed company to analysis (Typrep == "A")
-    
-    if (model_type == "CH3") {
+    if (model_type %in% c("CH3", "CH4", "FF5")) {
             
-            if (value_base == "EPS") {
-                
-                    ReptInfo_Acc <- tbl(QEA_db, "quarter") %>% 
-                            filter(Accper == !!as.integer(ahdqua)) %>% 
-                            filter(Stkcd %in% !!names(trddat)) %>% 
-                            filter(Typrep == "A") %>%  
-                            select(Stkcd, Accper, F020105) %>% 
-                            collect() %>% 
-                            rename("EPS" = F020105)
+            if (model_type == "CH3") {
                     
-            } else if (value_base == "CFPS") {
-                
-                    ReptInfo_Acc <- tbl(QEA_db, "CashFlow_Statement") %>% 
-                            filter(Accper == !!as.integer(ahdqua)) %>% 
-                            filter(Stkcd %in% !!names(trddat)) %>% 
-                            filter(Typrep == "A") %>%  
-                            select(Stkcd, Accper, C005000000) %>% 
-                            collect() %>% 
-                            rename("CFPS" = C005000000)
-                
-            }
-            
-    } else if(model_type == "CH4") {
-            
-            if (value_base == "EPS") {
-                
-                    ReptInfo_Acc_Income <- tbl(QEA_db, "Income_Statement") %>% 
-                            filter(Accper == !!as.integer(ahdqua)) %>% 
-                            filter(Stkcd %in% !!names(trddat)) %>% 
-                            filter(Typrep == "A") %>%  
-                            select(Stkcd, Accper, B002000000, B003000000) %>% 
-                            collect() %>% 
-                            rename("Earning" = B002000000,
-                                   "EPS" = B003000000)
+                    if (value_base == "EPS") {
+                        
+                            ReptInfo_Acc <- tbl_query(table_name = "quarter") %>% 
+                                    select(Stkcd, Accper, F020105) %>% 
+                                    collect() %>% 
+                                    rename("EPS" = F020105)
+                            
+                    } else if (value_base == "CFPS") {
+                        
+                            ReptInfo_Acc <- tbl_query(table_name = "CashFlow_Statement") %>% 
+                                    select(Stkcd, Accper, C005000000) %>% 
+                                    collect() %>% 
+                                    rename("CashFlow" = C005000000)
+                        
+                    }
                     
-            } else if (value_base == "CFPS") {
+            } else if (model_type == "CH4") {
                 
-                    ReptInfo_Acc_Earning <- tbl(QEA_db, "Income_Statement") %>% 
-                            filter(Accper == !!as.integer(ahdqua)) %>% 
-                            filter(Stkcd %in% !!names(trddat)) %>% 
-                            filter(Typrep == "A") %>%  
+                    if (value_base == "EPS") {
+                        
+                            ReptInfo_Acc_Income <- tbl_query(table_name = "Income_Statement") %>% 
+                                    select(Stkcd, Accper, B002000000, B003000000) %>% 
+                                    collect() %>% 
+                                    rename("Earning" = B002000000,
+                                           "EPS" = B003000000
+                                           )
+                            
+                    } else if (value_base == "CFPS") {
+                        
+                            ReptInfo_Acc_Earning <- tbl_query(table_name = "Income_Statement") %>% 
+                                    select(Stkcd, Accper, B002000000) %>% 
+                                    collect() %>% 
+                                    rename("Earning" = B002000000)
+                    
+                            ReptInfo_Acc_CashFlow <- tbl_query(table_name = "CashFlow_Statement") %>% 
+                                    select(Stkcd, Accper, C005000000) %>% 
+                                    collect() %>% 
+                                    rename("CashFlow" = C005000000)
+                            
+                            ReptInfo_Acc_Income <- inner_join(ReptInfo_Acc_Earning,
+                                                              ReptInfo_Acc_CashFlow,
+                                                              by = c("Stkcd", "Accper")
+                                                              )
+                        
+                    }
+                        
+                    ReptInfo_Acc_Balance <- tbl_query(table_name = "Balance_Sheet") %>% 
+                            select(Stkcd, Accper, A004000000) %>% 
+                            collect() %>% 
+                            rename("Equity" = A004000000)
+                    
+                    ReptInfo_Acc <- inner_join(ReptInfo_Acc_Income,
+                                               ReptInfo_Acc_Balance,
+                                               by = c("Stkcd", "Accper")
+                                               )
+                    
+            } else if (model_type == "FF5") {
+                    
+                    ReptInfo_Acc_Income <- tbl_query(table_name = "Income_Statement") %>% 
                             select(Stkcd, Accper, B002000000) %>% 
                             collect() %>% 
                             rename("Earning" = B002000000)
-            
-                    ReptInfo_Acc_CashFlow <- tbl(QEA_db, "CashFlow_Statement") %>% 
-                            filter(Accper == !!as.integer(ahdqua)) %>% 
-                            filter(Stkcd %in% !!names(trddat)) %>% 
-                            filter(Typrep == "A") %>%  
-                            select(Stkcd, Accper, C005000000) %>% 
+                     
+                    ReptInfo_Acc_Balance <- tbl_query(table_name = "Balance_Sheet") %>% 
+                            select(Stkcd, Accper, A001000000, A002000000, A004000000) %>% 
                             collect() %>% 
-                            rename("CFPS" = C005000000)
+                            rename("Asset" = A001000000, 
+                                   "Liability" = A002000000,
+                                   "Equity" = A004000000
+                                   ) %>% 
+                            mutate("Asset_Net" = Asset - Liability) %>% 
+                            select(c("Stkcd", "Equity", "Asset_Net"))
+                        
+                    # the first difference value between two accounting period
+                    if (period_type == "quarterly") {
+                        
+                            link_period <- c(ahead_period, 
+                                             (ahead_period + days(1)) %m+% months(-3) + days(-1)
+                                             )
+                            
+                    } else if (period_type == "yearly") {
+                        
+                            link_period <- c(ahead_period, ahead_period + years(-1))
+                            
+                    }
                     
-                    ReptInfo_Acc_Income <- inner_join(ReptInfo_Acc_Earning,
-                                                      ReptInfo_Acc_CashFlow,
-                                                      by = c("Stkcd", "Accper")
-                                                      )
+                    ReptInfo_Acc_Asset <- tbl_query(table_name = "Balance_Sheet",
+                                                    date = link_period
+                                                    ) %>% 
+                            select(Stkcd, Accper, A001000000) %>% 
+                            collect() %>% 
+                            mutate(Accper = as.Date(Accper, origin = "1970-01-01")) %>% 
+                            spread(Accper, A001000000) %>%
+                            mutate("Asset_Growth_Rate" = 
+                                           get(as.character(link_period[1])) / 
+                                           get(as.character(link_period[2])) - 1
+                                   ) %>% 
+                            select(c("Stkcd", "Asset_Growth_Rate"))
+                    
+                    ReptInfo_Acc <- inner_join(ReptInfo_Acc_Income, 
+                                               ReptInfo_Acc_Balance, 
+                                               by = c("Stkcd")
+                                               ) %>%
+                            inner_join(ReptInfo_Acc_Asset, by = c("Stkcd")) 
                 
             }
                 
-            ReptInfo_Acc_Balance <- tbl(QEA_db, "Balance_Sheet") %>% 
-                    filter(Accper == !!as.integer(ahdqua)) %>% 
-                    filter(Stkcd %in% !!names(trddat)) %>% 
-                    filter(Typrep == "A") %>%  
-                    select(Stkcd, Accper, A004000000) %>% 
-                    collect() %>% 
-                    rename("Equity" = A004000000)
-            
-            ReptInfo_Acc <- inner_join(ReptInfo_Acc_Income,
-                                       ReptInfo_Acc_Balance,
-                                       by = c("Stkcd", "Accper")
-                                       )
-            
-    } else if (model_type == "FF5") {
-            
-            ReptInfo_Acc_Income <- tbl(QEA_db, "Income_Statement") %>% 
-                    filter(Accper == !!as.integer(ahdqua)) %>% 
-                    filter(Stkcd %in% !!names(trddat)) %>% 
-                    filter(Typrep == "A") %>%  
-                    select(Stkcd, Accper, B002000000) %>% 
-                    collect() %>% 
-                    rename("Earning" = B002000000)
-             
-            ReptInfo_Acc_Balance <- tbl(QEA_db, "Balance_Sheet") %>% 
-                    filter(Accper == !!as.integer(ahdqua)) %>% 
-                    filter(Stkcd %in% !!names(trddat)) %>% 
-                    filter(Typrep == "A") %>%  
-                    select(Stkcd, Accper, A001000000, A002000000, A004000000) %>% 
-                    collect() %>% 
-                    rename("Asset" = A001000000, 
-                           "Liability" = A002000000,
-                           "Equity" = A004000000
-                           ) %>% 
-                    mutate("Asset_Net" = Asset - Liability)
-                
-            ReptInfo_Acc_Asset <- tbl(QEA_db, "Balance_Sheet") %>% 
-                    # the difference value between two accounting period
-                    filter(Accper %in% !!as.integer(c(ahdqua, ahdqua+years(-1)))) %>% 
-                    filter(Stkcd %in% !!names(trddat)) %>% 
-                    filter(Typrep == "A") %>%  
-                    select(Stkcd, Accper, A001000000) %>% 
-                    collect() %>% 
+            ReptInfo_Acc %<>% 
                     mutate(Accper = as.Date(Accper, origin = "1970-01-01")) %>% 
-                    spread(Accper, A001000000) %>%
-                    mutate("Asset_Growth_Rate" = 
-                               get(as.character(ahdqua)) / 
-                               get(as.character(ahdqua+years(-1))) - 1
-                           )
-            
-            ReptInfo_Acc <- select(ReptInfo_Acc_Balance, c("Stkcd", "Equity", "Asset_Net")) %>% 
-                    inner_join(ReptInfo_Acc_Income, ., by = c("Stkcd")) %>%
-                    inner_join(select(ReptInfo_Acc_Asset, c("Stkcd", "Asset_Growth_Rate")),
-                               by = c("Stkcd")
-                               ) 
-        
-    }
-                        
-    ReptInfo_Acc %<>% 
-            mutate(Accper = as.Date(Accper, origin = "1970-01-01")) %>% 
-            arrange(Stkcd, Accper)
+                    arrange(Stkcd, Accper)
     
-    # calculate the value of factors base accounting indicators ====
-    # Notice that only the stocks, which published quarter financial report,
-    # are brought into our sample to structure portfolio
-    potfol <- trddat %>% 
-            # extract the closing price of stocks at the ending of ahead quarter
-            lapply(filter, TradingDate == ymd(splday)) %>% 
-            bind_rows() %>% 
-            inner_join(ReptInfo_Acc, by = "Stkcd") %>% 
-            mutate("Reptdt" = year(TradingDate)) %>% 
-            inner_join(Nshr, by = c("Stkcd", "Reptdt")) %>% 
-            select(-c("Reptdt", "Dretnd", "Dsmvosd", "Nrrdaydt", "Listdt", "TradingDate")) %>% 
-            # size, the number of shares product its closing price
-            mutate("Size" = Clsprc * shrttl)
-                   
-    if(model_type == "CH3"){
-        
-            # value, at there we have three cluster paths, EPS, BVPS, VFPS
-            potfol %<>% mutate(Value = get(!!value_base) / Clsprc) %>% 
-                    filter("=="(rowSums(is.na(.)), 0L))
-        
-    } else if(model_type == "CH4") {
-        
-            potfol %<>% mutate(Value = get(!!value_base) / Clsprc,
-                               # profitability, earnings-to-book equity
-                               Profitability = Earning / Equity
-                               ) %>% 
-                    filter("=="(rowSums(is.na(.)), 0L))
-        
-    } else if(model_type == "FF5") {
-        
-            potfol %<>% mutate(Value = Asset_Net / Size, # B/M
-                               Profitability = Earning / Equity # ROE
-                               ) %>% 
-                    # Investment, annual total asset growth rate
-                    rename("Investment" = Asset_Growth_Rate) %>% 
-                    filter("=="(rowSums(is.na(.)), 0L))
-        
+            # calculate the value of factors base accounting indicators ====
+            # Notice that only the stocks, which published quarter financial report,
+            # are brought into our sample to structure portfolio
+            potfol <- trdwin %>% 
+                    # extract the closing price of stocks at the ending of ahead quarter
+                    lapply(filter, TradingDate == ymd(base_date)) %>% 
+                    bind_rows() %>% 
+                    inner_join(ReptInfo_Acc, by = "Stkcd") %>% 
+                    mutate("Reptdt" = year(TradingDate)) %>% 
+                    inner_join(Nshr, by = c("Stkcd", "Reptdt")) %>% 
+                    select(-c("Reptdt", "Dretnd", "Dsmvosd", "Listdt", "TradingDate")) %>% 
+                    # size, the number of shares product its closing price
+                    mutate("Size" = Clsprc * shrttl)
+            
+            if(value_base == "CFPS") {
+                
+                    potfol %<>% mutate("CFPS" = CashFlow / shrttl) %>% select(-CashFlow)
+                
+            }
+            
+            if(model_type == "CH3") {
+                
+                    # value, at there we have three cluster paths, EPS, BVPS, VFPS
+                    potfol %<>% mutate(Value = get(!!value_base) / Clsprc)
+                
+            } else if(model_type == "CH4") {
+                
+                    potfol %<>% mutate(Value = get(!!value_base) / Clsprc,
+                                       # profitability, earnings-to-book equity
+                                       Profitability = Earning / Equity
+                                       )
+                
+            } else if(model_type == "FF5") {
+                
+                    potfol %<>% mutate(Value = Asset_Net / Size, # B/M
+                                       Profitability = Earning / Equity # ROE
+                                       ) %>% 
+                            # Investment, total asset growth rate
+                            rename("Investment" = Asset_Growth_Rate)
+                
+            }
+            
+            # exclude the rows (stock) contained NaN value
+            potfol %<>% filter("=="(rowSums(is.na(.)), 0L))
+            
+            # only the stocks within portfolio list will be select into sample
+            trdwin %<>% `[`(pull(potfol, Stkcd))
+
     }
 
-    # There is a latent problem we should pay attention to,
-    # the time terms of stocks in our sample (potfol)
-    # aren't same with market trading dates at all (non-trading).
-    
-    # extract the current interval trading data of stocks ====
-    trdff <- `[`(trddat, pull(potfol, Stkcd)) %>% 
-            lapply(select, Stkcd, TradingDate, Dretnd, Dsmvosd, Nrrdaydt)
-    
-    if (model_type %in% c("CH3", "CH4")) {  
-            # extract the time series data at quarter `q`
-            trdff <- lapply(trdff, filter, TradingDate %within% 
-                            interval((Accprd[q] + days(1)) %m+% months(-3), Accprd[q])
-                            ) %>% 
-                    bind_rows()
-    
-    } else if (model_type == "FF5") {  
-            # extract the time series data at year `y`
-            trdff <- lapply(trdff, filter, TradingDate %within% 
-                            interval(Accprd[q] + years(-1), Accprd[q])
-                            ) %>% 
-                    bind_rows()
-    }
-    
+    # extract the current period trading data of stocks
+    trdff <- lapply(trdwin, filter, TradingDate %within% interval(starting_point, Accprd[q]))
+
     
     ####### The explanatory variables, (mkt_rf, SMB, VMG...) ########
     
     # mkt_rf, the returns of market risk subtracted risk-free rate of that day 
-    trdff %<>% group_nest(TradingDate) %>% # Generate the calendar ordered column-list
-            mutate("mkt_rf" = map_dbl(data, 
-                    ~ with(.x, Dretnd %*% (Dsmvosd / sum(Dsmvosd)) - unique(Nrrdaydt)))
-                   ) 
-                        
-    # we use the quantile of the factor Size and Value to cluster stocks
-    potfol_x <- potfol %>% 
-            mutate('g.SMB' = cut(Size, 
-                                 breaks = quantile(Size, c(0, 0.5, 1)), 
-                                 labels = c("Small", "Big"),
-                                 ordered_result = TRUE, include.lowest = TRUE
-                                 )
-                   )
-                    
-    if (model_type == "CH3") {
-            
-            potfol_x %<>% mutate(
-                    'g.VMG' = cut(Value, 
-                                  breaks = quantile(Value, c(0, 0.3, 0.7, 1)), 
-                                  labels = c("Growth", "V.Neutral", "Value"),
-                                  ordered_result = TRUE, include.lowest = TRUE
-                                  )
-                    ) %>% 
-            mutate(g.VMG = fct_relevel(g.VMG, c("Value", "V.Neutral", "Growth")))
-            
-    } else if(model_type == "CH4") {
-        
-            potfol_x %<>% mutate(
-                    'g.VMG' = cut(Value, 
-                                  breaks = quantile(Value, c(0, 0.3, 0.7, 1)), 
-                                  labels = c("Growth", "V.Neutral", "Value"),
-                                  ordered_result = TRUE, include.lowest = TRUE
-                                  ),
-                    'g.RMW' = cut(Profitability, 
-                                  breaks = quantile(Profitability, c(0, 0.3, 0.7, 1)), 
-                                  labels = c("Weak", "P.Neutral", "Robust"),
-                                  ordered_result = TRUE, include.lowest = TRUE
-                                  )
-                    ) %>% 
-                mutate(g.VMG = fct_relevel(g.VMG, c("Value", "V.Neutral", "Growth")),
-                       g.RMW = fct_relevel(g.RMW, c("Robust", "P.Neutral", "Weak")))
-            
-    } else if(model_type == "FF5") {
-    
-            potfol_x %<>% mutate(
-                    'g.HML' = cut(Value, quantile(Value, c(0, 0.3, 0.7, 1)), 
-                                  labels = c("Low", "V.Neutral","High"),
-                                  ordered_result = TRUE, include.lowest = TRUE
-                                  ),
-                    'g.RMW' = cut(Profitability, quantile(Profitability, c(0, 0.3, 0.7, 1)),
-                                  labels = c("Weak", "P.Neutral", "Robust"),
-                                  ordered_result = TRUE, include.lowest = TRUE
-                                  ),
-                    'g.CMA' = cut(Investment, quantile(Investment, c(0, 0.3, 0.7, 1)),
-                                  labels = c("Conservative", "I.Neutral", "Aggressive"),
-                                  ordered_result = TRUE, include.lowest = TRUE
-                                  )
-                    ) %>% 
-                    mutate(g.HML = fct_relevel(g.HML, c("High", "V.Neutral", "Low")),
-                           g.RMW = fct_relevel(g.RMW, c("Robust", "P.Neutral", "Weak"))
-                           )
-            
-    }
-    
-    # join the trading data of stocks with portfolio structure (cluster)
-    # Notice that this step will abandon the stocks which are not included in our sample                
-    trdff_x <- trdff %>% 
-            mutate(data = map(data, inner_join, 
-                              select(potfol_x, Stkcd, ends_with(ff_term)), 
-                              by = "Stkcd"
-                              )
-                   )
-                        
-    if(model_type == "CH3") {
-
-            # grouping by factor
-            trdff_x %<>% mutate(data = map(data, group_by, g.SMB, g.VMG))  
-                
-            # calculate the weighted returns of different portfolios
-            trdff_x %<>% mutate("Portfolio_Return" = map(data, 
-                    ~ summarise(.x, 
-                                "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), 
-                                .groups = "drop" 
-                                ))
-                    ) 
-                
-            # calculate the values of factors
-            trdff_x %<>% mutate(
-                    "SMB" = map_dbl(Portfolio_Return, ~ group_by(.x, g.SMB) %>% 
-                                    summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                    spread(g.SMB, avgRet) %>% 
-                                    with(., Small - Big)),
-                    "VMG" = map_dbl(Portfolio_Return, ~ group_by(.x, g.VMG) %>% 
-                                    summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                    spread(g.VMG, avgRet) %>% 
-                                    with(., Value - Growth))
-                    )
-            
-    } else if(model_type == "CH4") {
-        
-            trdff_x %<>% mutate(
-                    "SV_Ret" = map(data, 
-                                   ~ summarise(group_by(.x, g.SMB, g.VMG), 
-                                               "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), 
-                                               .groups = "drop" )
-                                   ),
-                    "SP_Ret" = map(data, 
-                                   ~ summarise(group_by(.x, g.SMB, g.RMW), 
-                                               "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), 
-                                               .groups = "drop" )
+    trdff %<>% map( ~ select(.x, c(Stkcd, TradingDate, Dretnd, Dsmvosd #, Markettype, Indus
                                    )
-                    )
-                
-            # calculate the values of factors
-            trdff_x %<>% mutate(
-                    "VMG" = map_dbl(SV_Ret, 
-                                    ~ summarise(group_by(.x, g.VMG), 
-                                                "avgRet" = mean(Ret), .groups = 'drop'
-                                                ) %>% 
-                                            spread(g.VMG, avgRet) %>% 
-                                            with(., Value - Growth)
-                                    ),
-                    "RMW" = map_dbl(SP_Ret, 
-                                    ~ summarise(group_by(.x, g.RMW), 
-                                                "avgRet" = mean(Ret), .groups = 'drop'
-                                                ) %>% 
-                                            spread(g.RMW, avgRet) %>% 
-                                            with(., Robust - Weak)
-                                    ),
-                    # SMB
-                    "SMB_VMG" = map_dbl(SV_Ret, ~ group_by(.x, g.SMB) %>% 
-                                summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                spread(g.SMB, avgRet) %>% 
-                                with(., Small - Big)),
-                    "SMB_RMW" = map_dbl(SP_Ret, ~ group_by(.x, g.SMB) %>% 
-                                summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                spread(g.SMB, avgRet) %>% 
-                                with(., Small - Big)),
-                    "SMB" = (SMB_VMG + SMB_RMW) / 2
-                    )
-                
-            trdff_x %<>% select(-c("SV_Ret", "SP_Ret", "SMB_VMG", "SMB_RMW"))
-        
-    } else if(model_type == "FF5") {
-        
-            # weighted returns of portfolios
-            trdff_x %<>% mutate(
-                    "SV_Ret" = map(data, 
-                                   ~ summarise(group_by(.x, g.SMB, g.HML), 
-                                               "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), 
-                                               .groups = "drop" )
-                                   ),
-                    "SP_Ret" = map(data, 
-                                   ~ summarise(group_by(.x, g.SMB, g.RMW), 
-                                               "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), 
-                                               .groups = "drop" )
-                                   ),
-                    "SI_Ret" = map(data, 
-                                   ~ summarise(group_by(.x, g.SMB, g.CMA), 
-                                               "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)), 
-                                               .groups = "drop" )
-                                   )
-                    )
-            
-            # calculate the values of factors
-            trdff_x %<>% mutate(
-                    "HML" = map_dbl(SV_Ret, 
-                                    ~ summarise(group_by(.x, g.HML), 
-                                                "avgRet" = mean(Ret), .groups = 'drop'
-                                                ) %>% 
-                                            spread(g.HML, avgRet) %>% 
-                                            with(., High - Low)
-                                    ),
-                    "RMW" = map_dbl(SP_Ret, 
-                                    ~ summarise(group_by(.x, g.RMW), 
-                                                "avgRet" = mean(Ret), .groups = 'drop'
-                                                ) %>% 
-                                            spread(g.RMW, avgRet) %>% 
-                                            with(., Robust - Weak)
-                                    ),
-                    "CMA" = map_dbl(SI_Ret, 
-                                    ~ summarise(group_by(.x, g.CMA), 
-                                                "avgRet" = mean(Ret), .groups = 'drop'
-                                                ) %>% 
-                                            spread(g.CMA, avgRet) %>% 
-                                            with(., Conservative - Aggressive)
-                                    ),
-                    # SMB
-                    "SMB_HML" = map_dbl(SV_Ret, ~ group_by(.x, g.SMB) %>% 
-                                summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                spread(g.SMB, avgRet) %>% 
-                                with(., Small - Big)),
-                    "SMB_RMW" = map_dbl(SP_Ret, ~ group_by(.x, g.SMB) %>% 
-                                summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                spread(g.SMB, avgRet) %>% 
-                                with(., Small - Big)),
-                    "SMB_CMA" = map_dbl(SI_Ret, ~ group_by(.x, g.SMB) %>% 
-                                summarise("avgRet" = mean(Ret), .groups = 'drop') %>% 
-                                spread(g.SMB, avgRet) %>% 
-                                with(., Small - Big)),
-                    "SMB" = (SMB_HML + SMB_RMW + SMB_CMA) / 3
-                    )
-                
-            trdff_x %<>% select(-c("SV_Ret", "SP_Ret", "SI_Ret",
-                                   "SMB_HML", "SMB_RMW", "SMB_CMA")
-                                )
-        
-    }
-    
-    
-    ##### The dependent variable, weighted daily returns of 5*5 portfolios #####
-    
-    if (model_type == "CH3") {
-    # structure the intersection 5*5 stock portfolios 
-            potfol_y <- mutate(potfol, 
-                        'g.SMB' = cut(Size, quantile(Size, seq(0, 1, by = 0.2)), 
-                                      labels = c("Small", "2", "3", "4", "Big"),
-                                      ordered_result = TRUE, include.lowest = TRUE),
-                        
-                        'g.VMG' = cut(Value, quantile(Value, seq(0, 1, by = 0.2)), 
-                                      labels = c("Growth", 2, 3, 4, "Value"),
-                                      ordered_result = TRUE, include.lowest = TRUE)
-                        ) 
-            
-            # re-level the group structure
-            potfol_y$g.VMG %<>% fct_relevel(c("Value", "4", "3", "2", "Growth"))
-            
-    } else if(model_type == "CH4") {
-        
-            potfol_y <- mutate(potfol, 
-                        'g.SMB' = cut(Size, 
-                                      breaks = quantile(Size, c(0, 0.5, 1)), 
-                                      labels = c("Small", "Big"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      ),
-                       
-                        'g.VMG' = cut(Value, 
-                                      breaks = quantile(Value, seq(0, 1, by = 0.25)), 
-                                      labels = c("Growth", 2, 3, "Value"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      ),
-
-                        'g.RMW' = cut(Profitability, 
-                                      breaks = quantile(Profitability, seq(0, 1, by = 0.25)), 
-                                      labels = c("Weak", 2, 3, "Robust"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      )
-                        ) 
-            
-            # re-level the group structure
-            potfol_y$g.VMG %<>% fct_relevel(c("Value", "3", "2", "Growth"))
-            potfol_y$g.RMW %<>% fct_relevel(c("Robust", "3", "2", "Weak"))
-        
-    } else if(model_type == "FF5") {
-        
-            potfol_y <- mutate(potfol, 
-                        'g.SMB' = cut(Size, 
-                                      breaks = quantile(Size, c(0, 0.5, 1)), 
-                                      labels = c("Small", "Big"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      ),
-                        
-                        'g.HML' = cut(Value, 
-                                      breaks = quantile(Value, seq(0, 1, by = 0.25)), 
-                                      labels = c("Low", 2, 3, "High"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      ),
-                         
-                        'g.RMW' = cut(Profitability, 
-                                      breaks = quantile(Profitability, seq(0, 1, by = 0.25)), 
-                                      labels = c("Weak", 2, 3, "Robust"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      ),
-                        
-                        'g.CMA' = cut(Investment, 
-                                      breaks = quantile(Investment, seq(0, 1, by = 0.25)), 
-                                      labels = c("Conservative", 2, 3, "Aggressive"),
-                                      ordered_result = TRUE, include.lowest = TRUE
-                                      )
-                        ) 
-                
-            # re-level the group structure
-            potfol_y$g.HML %<>% fct_relevel(c("High", "3", "2", "Low"))
-            potfol_y$g.RMW %<>% fct_relevel(c("Robust", "3", "2", "Weak"))
-        
-    }
-    
-    
-    # join the trading data of stocks with portfolio structure (cluster)
-    # Notice that this step will abandon the stocks which are not included in our sample
-    portfolio_ret <- trdff %>%
-            mutate(data = map(data, inner_join, 
-                              select(potfol_y, Stkcd, ends_with(ff_term)), 
-                              by = "Stkcd"
-                              )
-                   )
-                
-    if (model_type == "CH3") {
-            
-        # calculate the weighted daily returns of portfolios 
-        portfolio_ret %<>% transmute(TradingDate, 
-                        "PR" = map(data, 
-                                   ~ summarise(group_by(.x, g.SMB, g.VMG), 
-                        "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)), .groups = 'drop'))
-                          ) %>% 
-                unnest(cols = "PR")
-            
-            # data-visualization, plot a line figure ====
-            filter(portfolio_ret, 
-                   `&`(g.SMB %in% c("Small", "Big"),
-                       g.VMG %in% c("Value", "Growth"))
+                             ) %>% 
+                    left_join(Nrrate, by = 'TradingDate')
                    ) %>% 
-            ggplot(mapping = aes(x = TradingDate, y = ptf_Ret)) +
-            geom_line(aes(colour = g.SMB, linetype = g.VMG)) + 
-            labs(title = "Daily return of portfolios structured in size and value",
-                 y = "Weighted daily return of portfolios") +
-            scale_color_brewer(palette = "Set1") +
-            theme_bw() +
-            theme(plot.title = element_text(face = "bold"),
-                  axis.title.x = element_blank(),
-                  legend.position = "bottom",
-                  legend.title = element_blank(),
-                  legend.text = element_text(size = 15)
-                  )
-            
-            ggsave(glue("./{model_type}/figure_portfolio_return/{Accprd[q]}_portfolio_return.pdf"),
-                    width = 16, height = 9, dpi = 300, units = "in", limitsize = F)
-        
-    } else if(model_type == "CH4") {
-        
-            portfolio_ret %<>% transmute(TradingDate, 
-                              "PR" = map(data, 
-                                         ~ summarise(group_by(.x, g.SMB, g.VMG, g.RMW), 
-                              "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)), .groups = 'drop'))
-                              ) %>% 
-                    unnest(cols = "PR")
+            bind_rows() %>% 
+            group_nest(TradingDate) %>% # Generate the calendar ordered column-list
+            mutate("mkt_rf" = map_dbl(data, 
+                    ~ with(.x, Dretnd %*% (Dsmvosd / sum(Dsmvosd)) - unique(Nrrdaydt))
+                                      )
+                   )
+    
+    if (model_type %in% c("CH3", "CH4", "FF5")) {
+                        
+            # we use the quantile of the factor Size and Value to cluster stocks
+            potfol_x <- potfol %>% 
+                    mutate('g.SMB' = cut(Size, 
+                                         breaks = quantile(Size, c(0, 0.5, 1)), 
+                                         labels = c("Small", "Big")
+                                         )
+                           )
+                            
+            if (model_type == "CH3") {
+                    
+                    potfol_x %<>%  mutate(
+                           'g.VMG' = cut(Value, 
+                                         breaks = quantile(Value, c(0, 0.3, 0.7, 1)), 
+                                         labels = c("Growth", "V.Neutral", "Value")
+                                         )
+                            ) %>% 
+                            # re-level the group structure
+                            mutate(g.VMG = fct_relevel(g.VMG, c("Value", "V.Neutral", "Growth")))
+                    
+            } else if(model_type == "CH4") {
                 
-            filter(portfolio_ret, g.VMG %in% c("Value", "Growth")) %>% 
-            filter(g.RMW %in% c("Robust", "Weak")) %>% 
-                ggplot(mapping = aes(x = TradingDate, y = ptf_Ret)) +
-                geom_line(aes(colour = g.RMW, linetype = g.VMG)) + 
-                facet_wrap(~ g.SMB, nrow = 2) + 
-                labs(title = "Daily return of portfolios structured in size, value, and profitability.",
-                     y = "Weighted daily return of portfolios") +
-                scale_color_brewer(palette = "Set1") +
-                theme_bw() +
-                theme(plot.title = element_text(face = "bold"),
-                      axis.title.x = element_blank(),
-                      legend.position = "bottom",
-                      legend.title = element_blank(),
-                      legend.text = element_text(size = 15)
-                      )
+                    potfol_x %<>% mutate(
+                            'g.VMG' = cut(Value, 
+                                          breaks = quantile(Value, c(0, 0.3, 0.7, 1)), 
+                                          labels = c("Growth", "V.Neutral", "Value")
+                                          ),
+                            'g.RMW' = cut(Profitability, 
+                                          breaks = quantile(Profitability, c(0, 0.3, 0.7, 1)), 
+                                          labels = c("Weak", "P.Neutral", "Robust")
+                                          )
+                            ) %>% 
+                            mutate(g.VMG = fct_relevel(g.VMG, c("Value", "V.Neutral", "Growth")),
+                                   g.RMW = fct_relevel(g.RMW, c("Robust", "P.Neutral", "Weak"))
+                                   )
+                    
+            } else if(model_type == "FF5") {
             
-            ggsave(glue("./{model_type}/figure_portfolio_return/{Accprd[q]}_portfolio_return.pdf"),
-                    width = 16, height = 9, dpi = 300, units = "in", limitsize = F)
+                    potfol_x %<>% mutate(
+                            'g.HML' = cut(Value, 
+                                          quantile(Value, c(0, 0.3, 0.7, 1)), 
+                                          labels = c("Low", "V.Neutral","High")
+                                          ),
+                            'g.RMW' = cut(Profitability, 
+                                          quantile(Profitability, c(0, 0.3, 0.7, 1)),
+                                          labels = c("Weak", "P.Neutral", "Robust")
+                                          ),
+                            'g.CMA' = cut(Investment, 
+                                          quantile(Investment, c(0, 0.3, 0.7, 1)),
+                                          labels = c("Conservative", "I.Neutral", "Aggressive")
+                                          )
+                            ) %>% 
+                            mutate(g.HML = fct_relevel(g.HML, c("High", "V.Neutral", "Low")),
+                                   g.RMW = fct_relevel(g.RMW, c("Robust", "P.Neutral", "Weak"))
+                                   )
+                    
+            }
+            
+            # join the trading data of stocks with portfolio structure (cluster)
+            # Notice that this step will abandon the stocks which are not included in our sample                
+            trdff_factor <- trdff %>% 
+                    mutate(data = map(data, inner_join, 
+                                      select(potfol_x, Stkcd, ends_with(ff_term)), 
+                                      by = "Stkcd"
+                                      )
+                           )
+                                
+            if(model_type == "CH3") {
         
-    } else if(model_type == "FF5") {
-        
-            portfolio_ret %<>% transmute(TradingDate, 
-                              "PR" = map(data, 
-                                         ~ summarise(group_by(.x, g.SMB, g.HML, g.RMW, g.CMA), 
-                              "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)), .groups = 'drop'))
-                              ) %>% 
-                    unnest(cols = "PR")
-        
+                    # grouping by factor
+                    trdff_factor %<>% mutate(data = map(data, group_by, g.SMB, g.VMG))  
+                        
+                    # calculate the weighted returns of different portfolios
+                    trdff_factor %<>% mutate(
+                            "Portfolio_Return" = map(data, summarise, 
+                                                     "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd))
+                                                     )
+                            )
+                        
+                    # calculate the values of factors
+                    trdff_factor %<>% mutate(
+                            "SMB" = map_dbl(Portfolio_Return, 
+                                            ~ summarise(group_by(.x, g.SMB), 
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.SMB, avgRet) %>% 
+                                                    with(., Small - Big)
+                                            ),
+                            "VMG" = map_dbl(Portfolio_Return, 
+                                            ~ summarise(group_by(.x, g.VMG),
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.VMG, avgRet) %>% 
+                                                    with(., Value - Growth)
+                                            )
+                            )
+                    
+            } else if(model_type == "CH4") {
+                    
+                    # weighted returns of portfolios
+                    trdff_factor %<>% mutate(
+                            "SV_Ret" = map(data, 
+                                           ~ summarise(group_by(.x, g.SMB, g.VMG), 
+                                                       "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)) 
+                                                       )
+                                           ),
+                            "SP_Ret" = map(data, 
+                                           ~ summarise(group_by(.x, g.SMB, g.RMW), 
+                                                       "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)) 
+                                                       )
+                                           )
+                            )
+                        
+                    # calculate the values of factors
+                    trdff_factor %<>% mutate(
+                            "VMG" = map_dbl(SV_Ret, 
+                                            ~ summarise(group_by(.x, g.VMG),
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.VMG, avgRet) %>% 
+                                                    with(., Value - Growth)
+                                            ),
+                            "RMW" = map_dbl(SP_Ret, 
+                                            ~ summarise(group_by(.x, g.RMW),
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.RMW, avgRet) %>% 
+                                                    with(., Robust - Weak)
+                                            ),
+                            # SMB
+                            "SMB_VMG" = map_dbl(SV_Ret, 
+                                                ~ summarise(group_by(.x, g.SMB),
+                                                            "avgRet" = mean(Ret) 
+                                                            ) %>% 
+                                                        spread(g.SMB, avgRet) %>% 
+                                                        with(., Small - Big)
+                                                ),
+                            "SMB_RMW" = map_dbl(SP_Ret, 
+                                                ~ summarise(group_by(.x, g.SMB),
+                                                            "avgRet" = mean(Ret) 
+                                                            ) %>% 
+                                                        spread(g.SMB, avgRet) %>% 
+                                                        with(., Small - Big)
+                                                ),
+                            "SMB" = (SMB_VMG + SMB_RMW) / 2
+                            )
+                        
+                    trdff_factor %<>% select(-c("SV_Ret", "SP_Ret", "SMB_VMG", "SMB_RMW"))
+                
+            } else if(model_type == "FF5") {
+                
+                    # weighted returns of portfolios
+                    trdff_factor %<>% mutate(
+                            "SV_Ret" = map(data, 
+                                           ~ summarise(group_by(.x, g.SMB, g.HML), 
+                                                       "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)) 
+                                                       )
+                                           ),
+                            "SP_Ret" = map(data, 
+                                           ~ summarise(group_by(.x, g.SMB, g.RMW), 
+                                                       "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)) 
+                                                       )
+                                           ),
+                            "SI_Ret" = map(data, 
+                                           ~ summarise(group_by(.x, g.SMB, g.CMA), 
+                                                       "Ret" = Dretnd %*% (Dsmvosd / sum(Dsmvosd)) 
+                                                       )
+                                           )
+                            )
+                    
+                    # calculate the values of factors
+                    trdff_factor %<>% mutate(
+                            "HML" = map_dbl(SV_Ret, 
+                                            ~ summarise(group_by(.x, g.HML), 
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.HML, avgRet) %>% 
+                                                    with(., High - Low)
+                                            ),
+                            "RMW" = map_dbl(SP_Ret, 
+                                            ~ summarise(group_by(.x, g.RMW), 
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.RMW, avgRet) %>% 
+                                                    with(., Robust - Weak)
+                                            ),
+                            "CMA" = map_dbl(SI_Ret, 
+                                            ~ summarise(group_by(.x, g.CMA), 
+                                                        "avgRet" = mean(Ret) 
+                                                        ) %>% 
+                                                    spread(g.CMA, avgRet) %>% 
+                                                    with(., Conservative - Aggressive)
+                                            ),
+                            # SMB
+                            "SMB_HML" = map_dbl(SV_Ret, 
+                                                ~ summarise(group_by(.x, g.SMB),
+                                                            "avgRet" = mean(Ret) 
+                                                            ) %>% 
+                                                        spread(g.SMB, avgRet) %>% 
+                                                        with(., Small - Big)
+                                                ),
+                            "SMB_RMW" = map_dbl(SP_Ret, 
+                                                ~ summarise(group_by(.x, g.SMB),
+                                                            "avgRet" = mean(Ret) 
+                                                            ) %>% 
+                                                        spread(g.SMB, avgRet) %>% 
+                                                        with(., Small - Big)
+                                                ),
+                            "SMB_CMA" = map_dbl(SI_Ret, 
+                                                ~ summarise(group_by(.x, g.SMB),
+                                                            "avgRet" = mean(Ret) 
+                                                            ) %>% 
+                                                        spread(g.SMB, avgRet) %>% 
+                                                        with(., Small - Big)
+                                                ),
+                            "SMB" = (SMB_HML + SMB_RMW + SMB_CMA) / 3
+                            )
+                        
+                    trdff_factor %<>% select(
+                            -c("SV_Ret", "SP_Ret", "SI_Ret", "SMB_HML", "SMB_RMW", "SMB_CMA")
+                                             )
+                
+            }
+    
     }
     
-    # retain the daily data for running regression
-    trd_reg <- select(trdff_x, TradingDate, mkt_rf, all_of(ff_term)) %>% 
-            inner_join(portfolio_ret, ., by = "TradingDate") %>% 
-            inner_join(Nrrate, by = "TradingDate")
+    ##### The dependent variable, weighted daily returns of portfolios #####
     
+    if (model_type %in% c("CH3", "CH4", "FF5")) {
+            
+            if (model_type == "CH3") {
+
+                    potfol_y <- mutate(potfol, 
+                            'g.SMB' = cut(Size, 
+                                          quantile(Size, seq(0, 1, by = 0.2)), 
+                                          labels = c("Small", "2", "3", "4", "Big")
+                                          ),
+                            'g.VMG' = cut(Value, 
+                                          quantile(Value, seq(0, 1, by = 0.2)), 
+                                          labels = c("Growth", 2, 3, 4, "Value")
+                                          )
+                            ) %>% 
+                            mutate(g.VMG = fct_relevel(g.VMG, c("Value", "4", "3", "2", "Growth")))
+                    
+            } else if(model_type == "CH4") {
+                
+                    potfol_y <- mutate(potfol, 
+                            'g.SMB' = cut(Size, 
+                                          breaks = quantile(Size, c(0, 0.5, 1)), 
+                                          labels = c("Small", "Big")
+                                          ),
+                            'g.VMG' = cut(Value, 
+                                          breaks = quantile(Value, seq(0, 1, by = 0.25)), 
+                                          labels = c("Growth", 2, 3, "Value")
+                                          ),
+                            'g.RMW' = cut(Profitability, 
+                                          breaks = quantile(Profitability, seq(0, 1, by = 0.25)), 
+                                          labels = c("Weak", 2, 3, "Robust")
+                                          )
+                            ) %>% 
+                            mutate(g.VMG, fct_relevel(g.VMG, c("Value", "3", "2", "Growth")),
+                                   g.RMW, fct_relevel(g.RMW, c("Robust", "3", "2", "Weak"))
+                                   )
+                
+            } else if(model_type == "FF5") {
+                
+                    potfol_y <- mutate(potfol, 
+                            'g.SMB' = cut(Size, 
+                                          breaks = quantile(Size, c(0, 0.5, 1)), 
+                                          labels = c("Small", "Big")
+                                          ),
+                            'g.HML' = cut(Value, 
+                                          breaks = quantile(Value, seq(0, 1, by = 0.25)), 
+                                          labels = c("Low", 2, 3, "High")
+                                          ),
+                            'g.RMW' = cut(Profitability, 
+                                          breaks = quantile(Profitability, seq(0, 1, by = 0.25)), 
+                                          labels = c("Weak", 2, 3, "Robust")
+                                          ),
+                            'g.CMA' = cut(Investment, 
+                                          breaks = quantile(Investment, seq(0, 1, by = 0.25)), 
+                                          labels = c("Conservative", 2, 3, "Aggressive")
+                                          )
+                            ) %>% 
+                            mutate(g.HML, fct_relevel(g.HML, c("High", "3", "2", "Low")),
+                                   g.RMW, fct_relevel(g.RMW, c("Robust", "3", "2", "Weak"))
+                                   )
+                
+            }
+            
+            
+            # join the trading data of stocks with portfolio structure (cluster)
+            # Notice that this step will abandon the stocks which are not included in our sample
+            portfolio_ret <- trdff %>%
+                    mutate(data = map(data, inner_join, 
+                                      select(potfol_y, Stkcd, ends_with(ff_term)), 
+                                      by = "Stkcd"
+                                      )
+                           )
+                        
+            if (model_type == "CH3") {
+                    
+                    # calculate the weighted daily returns of portfolios 
+                    portfolio_ret %<>% transmute(TradingDate, 
+                            "PR" = map(data, 
+                                       ~ summarise(group_by(.x, g.SMB, g.VMG),
+                                                   "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)) 
+                                                   )
+                                       )
+                            ) %>% 
+                            unnest(cols = "PR")
+                    
+                    # data-visualization, plot a line figure ====
+                    filter(portfolio_ret, `&`(g.SMB %in% c("Small", "Big"),
+                                              g.VMG %in% c("Value", "Growth")
+                                              )
+                           ) %>% 
+                        ggplot(mapping = aes(x = TradingDate, y = ptf_Ret)) +
+                            geom_line(aes(colour = g.SMB, linetype = g.VMG)) + 
+                                labs(y = "Weighted daily return",
+                                     title = "Daily return of portfolios structured in size and value"
+                                     ) +
+                                scale_color_brewer(palette = "Set1") +
+                                theme_bw() +
+                                theme(axis.title.x = element_blank(),
+                                      legend.position = "bottom",
+                                      legend.title = element_blank(),
+                                      legend.text = element_text(size = 15)
+                                      )
+
+                        ggsave(filename = paste(Accprd[q], period_type, value_base, 
+                                                "portfolio_return.pdf",
+                                                sep = "_"
+                                                ), 
+                               path = file.path(model_type, "figure_portfolio_return"),
+                               width = 16, height = 9
+                               )
+                
+            } else if(model_type == "CH4") {
+                
+                    portfolio_ret %<>% transmute(TradingDate, 
+                            "PR" = map(data, 
+                                       ~ summarise(group_by(.x, g.SMB, g.VMG, g.RMW), 
+                                                   "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)) 
+                                                   )
+                                       )
+                            ) %>% 
+                            unnest(cols = "PR")
+                        
+                    filter(portfolio_ret, g.VMG %in% c("Value", "Growth")) %>% 
+                    filter(g.RMW %in% c("Robust", "Weak")) %>% 
+                        ggplot(mapping = aes(x = TradingDate, y = ptf_Ret)) +
+                            geom_line(aes(colour = g.RMW, linetype = g.VMG)) + 
+                                facet_wrap(~ g.SMB, nrow = 2) + 
+                                    labs(y = "Weighted daily return",
+                    title = "Daily return of portfolios structured in size, value, and profitability"
+                                         ) +
+                                    scale_color_brewer(palette = "Set1") +
+                                    theme_bw() +
+                                    theme(axis.title.x = element_blank(),
+                                          legend.position = "bottom",
+                                          legend.title = element_blank(),
+                                          legend.text = element_text(size = 15)
+                                          )
+                        
+                    ggsave(filename = paste(Accprd[q], period_type, value_base, 
+                                            "portfolio_return.pdf",
+                                            sep = "_"
+                                            ), 
+                           path = file.path(model_type, "figure_portfolio_return"),
+                           width = 16, height = 18
+                           )
+                
+            } else if(model_type == "FF5") {
+                
+                    portfolio_ret %<>% transmute(TradingDate, 
+                            "PR" = map(data, 
+                                       ~ summarise(group_by(.x, g.SMB, g.HML, g.RMW, g.CMA), 
+                                                   "ptf_Ret" = Dretnd %*% (Dsmvosd /sum(Dsmvosd)) 
+                                                   )
+                                       )
+                            ) %>% 
+                            unnest(cols = "PR")
+                
+            }
+            
+            # retain the daily data for running regression
+            trd_reg <- select(trdff_factor, TradingDate, mkt_rf, all_of(ff_term)) %>% 
+                    inner_join(portfolio_ret, ., by = "TradingDate") %>% 
+                    inner_join(Nrrate, by = "TradingDate")
     
-    ############## Regression ############
+    }
     
-    if (model_type == "CH3") {
+
+    # Running Regression ---------------------------------------------------
+    
+    if (model_type == "CAPM") {
+        
+            trd_reg <- select(trdff, TradingDate, mkt_rf) %>% 
+                    lapply(trdwin, inner_join, ., by = "TradingDate") %>% 
+                    map(~ ifelse(nrow(.x) <= 40L, return(NULL), return(.x))) %>% 
+                    compact()
+            
+            potfolreg[[q]] <- map_dfr(trd_reg, 
+                                      ~ lm_ff(.x, ff_class = "CAPM") %>% tidy(),
+                                      .id = "Stkcd"
+                                      )
+    
+    } else if (model_type == "CH3") {
             
             potfolreg[[q]] <- trd_reg %>% 
                     group_by(g.SMB, g.VMG) %>% nest() %>%  
@@ -819,51 +925,147 @@ for (q in 1:length(Accprd)) { # loop in quarter
     
 }
 
-save(potfolreg, file = glue("./{model_type}/Hu-{model_type}.RData"))
+save(potfolreg, file = glue("./{model_type}/{period_type}_{value_base}_{model_type}.RData"))
 dbDisconnect(QEA_db); rm(QEA_db)
 
+# create tables ====
 
-# Part IV, visualizing the factor by month ----------------------------------
-Accprd.year <- unique(year(Accprd))
+library(DT)
+library(knitr)
+library(kableExtra)
 
-for (i in seq_along(Accprd.year)) {
-
-    FF_factor <- lapply(potfolreg, unnest, cols = c("data")) %>% 
-        lapply(as_tibble) %>%  # remove the group attributes
-        map_dfr(select, c('TradingDate', all_of(ff_term))) %>% 
-        distinct() %>%  # duplicated among different portfolios
-        gather(Factor, Return, -TradingDate) %>% 
-        filter(year(TradingDate) == Accprd.year[i]) %>% # annually
-        mutate("month" = month(TradingDate, label = TRUE),
-               "day" = day(TradingDate),
-               Factor = factor(Factor, levels = all_of(ff_term))
-               )
+if (model_type %in% c("CH3", "CH4")) {
     
-    ggplot(data = FF_factor) +
-        # The month that earnings report are released
-        geom_rect(data = data.frame(month = factor(c("Jan", "Apr", "Jul", "Oct"))),
-            aes(xmin = 1, xmax = 31, ymin = -Inf, ymax = Inf),
-            alpha = 0.1, fill = 'blue') +
-        geom_path(aes(x = day, y = Return, linetype = Factor, color = Factor)) + 
-        facet_wrap( ~ month, ncol = 3) +
-        labs(y = "The difference return of Mimicking-risk factor") +
-        scale_color_brewer(palette = "Set1") +
-        theme_bw() +
-        theme(legend.position = "bottom",
-              axis.title.x = element_blank()
-              )
+    # the estimate intercepts of portfolios
+    potfolreg_table <- map_dfr(potfolreg, unnest, cols = c("Coef"), 
+                               .id = "quarter"
+                               ) %>% 
+            filter(term == "(Intercept)") %>% 
+            select(c(quarter, ends_with(ff_term), statistic)) %>% 
+            ungroup()
     
-    file.path(getwd(), model_type, glue('{Accprd.year[i]}_path-{model_type}_factor.pdf')) %>% 
-            ggsave(width = 16, height = 9, dpi = 300, units = "in", limitsize = F)
+    if (model_type == "CH3") {
+        
+            VMG_level <- levels(potfolreg_table$g.VMG) 
+        
+            potfolreg_table %<>% spread(g.VMG, statistic)
+        
+            datatable(potfolreg_table, 
+                      rownames = FALSE,
+                      caption = glue('The estimate intercepts of portfolios ({model_type})')
+                      ) %>% 
+            formatRound(columns = VMG_level, digits = 3)
+            
+            kable(potfolreg_table, 
+                  format = "latex", 
+                  digits = 3,
+                  longtable = T, booktabs = T, 
+                  caption = glue('The estimate intercepts of portfolios ({model_type})')
+                  ) %>%
+            kable_styling(latex_options = c("repeat_header"),
+                          position = "center"
+                          )
+
+    } else if (model_type == "CH4") {
+
+            potfolreg_table %<>% group_by(quarter, g.SMB) %>% 
+                    group_nest() %>% 
+                    mutate(data = map(data, spread, g.RMW, statistic)) %>% 
+                    spread(g.SMB, data) %>% 
+                    unnest(cols = c(Small, Big), names_repair = "minimal")
+                    
+            datatable(potfolreg_table,
+                      rownames = FALSE,
+                      caption = glue('The estimate intercepts of portfolios ({model_type})')
+                      ) %>% 
+            formatRound(columns = c(3:6, 8:11), digits = 3)
+                    
+            kable(potfolreg_table, 
+                  format = "latex", 
+                  digits = 3,
+                  longtable = T, booktabs = T, 
+                  caption = glue('The estimate intercepts of portfolios ({model_type})')
+                  ) %>%
+            add_header_above(c(" " = 2, "Small" = 4, " " = 1, "Big" = 4)) %>% 
+            kable_styling(latex_options = c("repeat_header"),
+                          position = "center"
+                          )
+    }
 
 }
 
 
-# table - portfolio estimates
-map_dfr(potfolreg, unnest, cols = c("Coef"), .id = "quarter") %>% 
-    select(-c(data, glue("lm_{model_type}"))) %>% 
-        DT::datatable(rownames = FALSE) %>% 
-        DT::formatRound(columns=c('estimate', 'std.error', 'statistic', 'p.value'), 
-                        digits=3
-                        )
+# visualizing ====
 
+if (model_type == "CAPM") {
+    
+    # the distribution of the estimator of beta (CAPM) ====
+    
+    variable <- "mkt_rf"
+    estimator <- "estimate"
+    
+    measure <- lapply(potfolreg, group_nest, term) %>% 
+            lapply(filter, term == variable) %>% 
+            lapply(mutate, data = map(data, select, Stkcd, all_of(estimator))) %>% 
+            lapply(unnest, cols = "data")
+            
+    for (i in seq_along(measure)) {
+        
+            ggplot(data = measure[[i]]) +
+                geom_histogram(mapping = aes(x = get(estimator)), bins = 25) +
+                    labs(title = "The distribution of the estimator of beta (CAPM)",
+                         x = "value of beta (stock)",
+                         subtitle = glue("{period_type} - {names(measure)[i]}")
+                         ) +
+                    theme_bw()
+            
+                ggsave(filename = glue('{Accprd[i]}_{model_type}_beta_hist.pdf'),
+                       path = file.path(model_type),
+                       width = 6, height = 6)
+        
+    }
+
+} else if (model_type %in% c("CH3", "CH4", "FF5")) {  
+    
+    # visualize the values of factors by month ====
+    
+    Accprd_year <- unique(year(Accprd))
+    
+    for (i in seq_along(Accprd_year)) {
+    
+        FF_factor <- lapply(potfolreg, unnest, cols = c("data")) %>% 
+                lapply(as_tibble) %>%  # remove the group attributes
+                map_dfr(select, c('TradingDate', all_of(ff_term))) %>% 
+                distinct() %>%  # duplicated among different portfolios
+                gather(Factor, Return, -TradingDate) %>% 
+                filter(year(TradingDate) == Accprd_year[i]) %>% # annually
+                mutate("month" = month(TradingDate, label = TRUE),
+                       "day" = day(TradingDate),
+                       Factor = factor(Factor, levels = all_of(ff_term))
+                       )
+        
+        ggplot(data = FF_factor) +
+            # The months that earnings report are released
+            geom_rect(data = data.frame("month" = factor(c("Jan", "Apr", "Jul", "Oct"))),
+                      mapping = aes(xmin = 1, xmax = 31, ymin = -Inf, ymax = Inf),
+                      alpha = 0.1, fill = 'blue'
+                      ) +
+            geom_path(aes(x = day, y = Return, linetype = Factor, color = Factor)) + 
+                facet_wrap( ~ month, ncol = 3) +
+                    labs(y = "The value of Mimicking-risk factors",
+                         title = "The first difference value between diversified portfolios"
+                         ) +
+                    scale_color_brewer(palette = "Set1") +
+                    theme_bw() +
+                    theme(legend.position = "bottom",
+                          axis.title.x = element_blank()
+                          )
+        
+        glue('{Accprd_year[i]}_{value_base}_{model_type}_factor_path.pdf') %>% 
+                ggsave(width = 16, height = 9,
+                       path = file.path(model_type)
+                       )
+    
+    }
+    
+}
