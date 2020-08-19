@@ -7,13 +7,10 @@ library(magrittr)
 library(modelr)
 
 library(glue)
+library(Formula)
 library(multipanelfigure)
 library(RColorBrewer)
 library(ggthemes)
-
-library(DBI)
-library(RSQLite)
-library(dbplyr)
 
 summarise <- purrr::partial(summarise, .groups = 'drop')
 
@@ -116,11 +113,11 @@ Pre_type <- 6L
 
 # setup the working directory 
 setwd('~/OneDrive/Data.backup/QEAData/')
-# link to database
-QEA_db <- dbConnect(RSQLite::SQLite(), "./QEA_db.sqlite")
 # import daily trading data of stocks, trddat
 # and trading date of China A-share markets, trdday
 load(file = './PrePotfol.RData')
+# import accounting information from reports
+load(file = "./ReportInfo.RData")
 # import Fama-French factors (CH3, CH4, or FF5)
 load(list.files(path = glue("./{model_type}"),
                 pattern =  glue("{model_type}\\.RData$"),
@@ -131,14 +128,17 @@ load(list.files(path = glue("./{model_type}"),
 if (model_type == "CH3") {
     
         ff_term <- c("mkt_rf", "SMB", "VMG")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + VMG)
 
 } else if (model_type == "CH4") {
     
         ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + VMG + RMW)
 
 } else if (model_type == "FF5") {
 
         ff_term <- c("mkt_rf", "SMB", "HML", "RMW", "CMA")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + HML + RMW + CMA)
 
 }
 ff_factor <- map(potfolreg, "data") %>% 
@@ -159,55 +159,6 @@ for (i in seq_along(Accprd)) {
     if (!all(dir.exists(file.path(model_type, names(Accprd)[i], Accprd[[i]])))) 
         mapply(dir.create, file.path(model_type, names(Accprd)[i], Accprd[[i]]))
 }
-
-# Import the status data of quarterly financial report 
-ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', 
-                       delim = '\t', na = '',
-                       col_types = cols_only(
-                               Stkcd = col_character(),
-                               # 1:4, first quarter, mid of year, third quarter, 
-                               # and year earnings report
-                               Reptyp = col_factor(levels = c(1:4)),
-                               # the deadline of accounting cycle
-                               Accper = col_date(format = "%Y-%m-%d"),
-                               # the date when report was discolsed
-                               Annodt = col_date(format = "%Y-%m-%d"),
-                               # the day of week when report was discolsed
-                               # c(0:6): Sun < Mon < Tue < Wed < Thu < Fri < Sat
-                               Annowk = col_factor(levels = c(0:6)),
-                               # net profits and earnings per share
-                               Profita = col_double(), Erana = col_double()
-                               )
-        )
-# we could observe that the symbols of stocks belong to China A-Share markets
-# are begin with number c(0, 3, 6),
-# so we use regular expression and string function 'grepl' to filter others 
-if (nrow(problems(ReptInfo)) >= 0L) {
-        ReptInfo %<>% `[`(-unique(problems(.)$row), ) %>% 
-                filter(grepl('^[0-6]', Stkcd)) %>% 
-                arrange(Stkcd, Accper)
-}
-
-
-# structure the sub-sample according to pre-earnings report ==== 
-# ForecFinReportType - Nine categories including turn to loss, continued loss, 
-# turn to gain profit from loss, continued profitability, large increase,
-# large decrease, slight increase, slight decrease, and uncertainty
-PreRept <- read_delim('./Acc_Quarter/FIN_F_ForecFin.txt', 
-                      delim = '\t', na = '', 
-                      col_types = cols_only(
-                              # the symbol of stocks, need to be rename
-                              StockCode = col_character(),
-                              PubliDate = col_date(format = "%Y-%m-%d"),
-                              AccPeriod = col_date(format = "%Y-%m-%d"),
-                              # 0 = performance advance expose, 1 = regular disclosure
-                              Source = col_factor(),
-                              # the categories of report source
-                              ForecFinReportType = col_factor()
-                              )
-        ) %>% 
-        rename('Stkcd' = StockCode) %>% 
-        filter(grepl('^[0-6]', Stkcd))
 
 # the color of category data used for plotting
 qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual', ]
@@ -520,3 +471,90 @@ for (y in seq_along(Accprd)) { # loop in years
            )
 
 }
+
+
+# Regression P/E on factors -----------------------------------------------
+
+library(DBI)
+library(RSQLite)
+library(dbplyr)
+library(broom)
+# link to database
+QEA_db <- dbConnect(RSQLite::SQLite(), "./QEA_db.sqlite")
+
+ReptInfo_Acc_EPS <- tbl(QEA_db, "Income_Statement") %>% 
+        select(Stkcd, Accper, B003000000) %>% 
+        filter(Accper %in% !!flatten_dbl(Accprd)) %>% 
+        collect() %>% 
+        rename("EPS" = B003000000) %>% 
+        mutate(Accper = as.Date(Accper, origin = '1970-01-01'))
+
+dbDisconnect(QEA_db)
+
+Accprd %<>% flatten_dbl() %>% as.Date(origin = '1970-01-01')
+
+stkcd_quarter <- dir(path = file.path('~/OneDrive/Data.backup/QEAData', model_type),
+                     pattern = glue("{Pre_type}_{Markettype}_stkcd\\.csv$"),
+                     recursive = TRUE,
+                     full.names = TRUE
+                     ) %>% 
+        map(read_csv, col_types = cols(Stkcd = col_character())) %>% 
+        map(pull, "Stkcd") %>% 
+        `names<-`(Accprd)
+
+reg_EP_on_ff <- vector(mode = 'list', length = length(Accprd)) %>% 
+        `names<-`(Accprd)
+
+for (i in seq_along(Accprd)) {
+    
+    start_point <- Accprd[i] + days(1) - months(3)
+    
+    trddat_quarter <- trddat %>% 
+            filter(Stkcd %in% stkcd_quarter[[i]]) %>% 
+            mutate(data = map(data, filter, TradingDate %within% interval(start_point, Accprd[i])))
+    
+    base_date <- Accprd[i] %>% print()
+    
+    while (!base_date %in% trdday) base_date <- base_date + days(-1)
+    
+    ReptInfo_Acc_PE <- trddat_quarter %>% 
+            mutate(data = map(data, filter, TradingDate == base_date)) %>% 
+            unnest(cols = "data") %>% 
+            select(-c(TradingDate, Dretnd, Dsmvosd, Listdt)) %>% 
+            inner_join(filter(ReptInfo_Acc_EPS, Accper == Accprd[i]),
+                       by = "Stkcd"
+                       ) %>% 
+            mutate("EP" = EPS / Clsprc)
+    
+    # merge the trading data with factors and risk-free interests
+    reg_quarter <- trddat_quarter %>% 
+            mutate(data = map(data, ~ inner_join(.x, ff_factor, by = "TradingDate") %>% 
+                                          inner_join(Nrrate, by = "TradingDate") 
+                              )
+                   ) %>% 
+            `[`(map_lgl(.$data, ~ nrow(.x) >= 30L), )
+    
+    # running regression about stock returns on multiple factors 
+    reg_quarter %<>%
+            mutate("lm_est" = map(data, ~ tidy(lm(formula = formula(model_formula, lhs = 1), 
+                                                  data = .x,
+                                                  )
+                                               ) %>% 
+                                          select(term, estimate)
+                                  )
+            ) %>% 
+            select(Stkcd, lm_est) %>% 
+            unnest(cols = "lm_est") %>% 
+            spread(key = term, value = estimate) %>% 
+            right_join(ReptInfo_Acc_PE, by = "Stkcd")
+            
+    # running regression about EP ratio on estimate coefficients of factors 
+    reg_EP_on_ff[[i]] <- lm(formula = formula(model_formula, lhs = 2), 
+                            data = reg_quarter
+                            ) 
+
+}
+
+map_dfr(reg_EP_on_ff, tidy, .id = "quarter") %T>% 
+        View() %>% 
+        save(file = glue('~/OneDrive/Data.backup/QEAData/reg_EP_on_ff_{model_type}.RData'))

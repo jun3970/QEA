@@ -166,17 +166,17 @@ trd_Dret <- TRD_Dalyr %>%
 
 # confirm the daily returns of stocks we calculated is same with CSMAR's ====
 if(
-    
-    map2_lgl(trd_Dret, TRD_Dalyr,
-        ~ near(round(.x, digits = 3),  # calculated by ourselves
-               round(pull(.y, Dretnd)[-1], digits = 3)  # from CSMAR
-               ) %>% 
-          any()  # any() for all trading dates of a stock
-        ) %>% 
-    any()  # any() for all stocks
-   
-   ) { TRD_Dalyr %<>% bind_rows() 
-    } else stop("Attention! The daily returns from CSMAR aren't same with us.")
+    any(  # for all stocks
+        map2_lgl(trd_Dret, TRD_Dalyr,
+                 ~ near(round(.x, digits = 3),  # calculated by ourselves
+                        round(pull(.y, Dretnd)[-1], digits = 3)  # from CSMAR
+                        ) %>% 
+                        any()  # for all trading dates of a stock
+                 ) 
+        )  
+   ) { # if true, combine all trading data of stocks into a panel
+       TRD_Dalyr %<>% bind_rows() 
+} else stop("Attention! The daily returns from CSMAR aren't same with us.")
 
 # the transaction derivative index
 MKT_Dalyr <- read_delim(file = "./Acc_Daily/STK_MKT_Dalyr.txt", 
@@ -207,7 +207,6 @@ Nrrate <- read_delim(file = 'TRD_Nrrate.txt',
         # # we could either select the Treasury rate as risk-free interest
         # filter(Nrr1 == "TBC") %>% select(- Nrr1) %>%
         rename('TradingDate' = Clsdt)
-
 
 left_join(TRD_Dalyr, MKT_Dalyr, by = c("Stkcd", "TradingDate")) %>% 
         left_join(Nrrate, by = 'TradingDate') %>% 
@@ -250,18 +249,6 @@ AF_Co <- read_delim(file = 'AF_Co.csv',
 
 # join the information of stocks listed date and industry to trading data
 trddat %<>% inner_join(AF_Co, by = 'Stkcd')
-
-# take a look at the numbers of stocks listed in a year
-count(AF_Co, year = year(Listdt), Industry = str_sub(Indus, 1, 1)) %>% 
-    ggplot() +
-        geom_col(aes(x = year, y = n, fill = Industry)) +
-            labs(x = "Year", y = "The count of firms listed in this year") +
-            theme_bw()
-
-# export this image
-ggsave(filename = glue::glue("./Stock-Indus-His.pdf"),
-       width = 16, height = 9
-       ) 
 
 # Setup trading day in Chinese A-share markets
 trdday <- read_delim(file = 'TRD_Cale.csv', delim = '\t', na = '',
@@ -316,4 +303,94 @@ save(trddat,  # the daily trading data, the listed date and industry of stocks
      Nrrate,  # the daily risk-free interests of capital market
      Nshr,    # the yearly situation of structure of shares of stocks
      file = "./PrePotfol.RData"
+     )
+
+
+# Part III Prepare data relative with quarterly reports in advance -----
+
+# Import the status data of quarterly financial report 
+ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', 
+                       delim = '\t', na = '',
+                       col_types = cols_only(
+                               Stkcd = col_character(),
+                               # 1:4, first quarter, mid of year, third quarter, 
+                               # and year earnings report
+                               Reptyp = col_factor(levels = c(1:4)),
+                               # the deadline of accounting cycle
+                               Accper = col_date(format = "%Y-%m-%d"),
+                               # the date when report was discolsed
+                               Annodt = col_date(format = "%Y-%m-%d"),
+                               # the day of week when report was discolsed
+                               # c(0:6): Sun < Mon < Tue < Wed < Thu < Fri < Sat
+                               Annowk = col_factor(levels = c(0:6)),
+                               # net profits and earnings per share
+                               Profita = col_double(), Erana = col_double()
+                               )
+        )
+# we could observe that the symbols of stocks belong to China A-Share markets
+# are begin with number c(0, 3, 6),
+# so we use regular expression and string function 'grepl' to filter others 
+if (nrow(problems(ReptInfo)) >= 0L) {
+        ReptInfo %<>% `[`(-unique(problems(.)$row), ) %>% 
+                filter(grepl('^[0-6]', Stkcd)) %>% 
+                arrange(Stkcd, Accper)
+}
+
+
+# structure the sub-sample according to pre-earnings report ==== 
+# ForecFinReportType - Nine categories including turn to loss, continued loss, 
+# turn to gain profit from loss, continued profitability, large increase,
+# large decrease, slight increase, slight decrease, and uncertainty
+PreRept <- read_delim('./Acc_Quarter/FIN_F_ForecFin.txt', 
+                      delim = '\t', na = '', 
+                      col_types = cols_only(
+                              # the symbol of stocks, need to be rename
+                              StockCode = col_character(),
+                              PubliDate = col_date(format = "%Y-%m-%d"),
+                              AccPeriod = col_date(format = "%Y-%m-%d"),
+                              # 0 = performance advance expose, 1 = regular disclosure
+                              Source = col_factor(),
+                              # the categories of report source
+                              ForecFinReportType = col_factor()
+                              )
+        ) %>% 
+        rename('Stkcd' = StockCode) %>% 
+        filter(grepl('^[0-6]', Stkcd))
+
+save(ReptInfo,
+     PreRept,
+     file = "./ReportInfo.RData"
+     )
+
+# take a look at the numbers of stocks listed in a year
+count(AF_Co, year = year(Listdt), Industry = str_sub(Indus, 1, 1)) %>% 
+    ggplot() +
+        geom_col(aes(x = year, y = n, fill = Industry)) +
+            labs(x = "Year", y = "The count of firms listed in this year") +
+            theme_bw()
+
+# export this image
+ggsave(filename = glue::glue("./Stock-Indus-His.pdf"),
+       width = 16, height = 9
+       ) 
+
+# the paying attention resource disclosure by stock exchange, yearly data
+AF_Cfeature <- read_delim('./Acc_Annual/AF_CFEATUREPROFILE.txt', 
+                          delim = '\t', na = '',
+                          col_types = cols_only(
+                                Stkcd = col_character(),
+                                Accper = col_date(format = "%Y-%m-%d"),
+                                CompanySize = col_double(),
+                                # the number of analysis teams
+                                AnaAttention = col_integer(), 
+                                # the number of analysis reports
+                                ReportAttention = col_integer(), 
+                                # the information opacity of company 
+                                CompanyOpacity = col_character()
+                                )
+        )
+
+save(AF_Co,
+     AF_Cfeature,
+     file = "./FirmAttr.RData"
      )

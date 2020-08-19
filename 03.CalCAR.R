@@ -15,8 +15,11 @@ library(RColorBrewer)
 library(ggthemes)
 
 source('~/R/QEA/QEA.R/function_QEA.R')
-
-mod_lm <- function(df, ...) lm(formula = model_formula, ..., data = df)
+setwd('~/OneDrive/Data.backup/QEAData')
+# Import the listing date, industry, and paying attention resource of stocks
+load(file = "./FirmAttr.RData")
+# Import the status data of quarterly financial report 
+load(file = "./ReportInfo.RData"); rm(PreRept)
 
 # Part I, import data and assign parameter -------------------------------
 
@@ -33,66 +36,6 @@ Markettype <- 21L
 subsam <- FALSE
 ## if the value of `subsam` is a number, for example, subsam <- 300L
 ## the analysis results of below script will just based on a sub-sample 
-
-
-setwd('~/OneDrive/Data.backup/QEAData')
-# the listing date and industry information of stocks 
-AF_Co <- read_delim('AF_Co.csv', 
-                    delim = '\t', na = '',
-                    col_types = cols_only(
-                            Stkcd = col_character(),
-                            IndClaCd = col_factor(),  # industry category
-                            Indus = col_character(),  # industry symbol
-                            # Indnme = col_character(),  # industry name
-                            Listdt = col_date('%Y-%m-%d')  # listed date
-                            ) 
-        ) %>% 
-        # 2012 Edition Industry Classification (China Securities Regulatory Commission)
-        filter(IndClaCd == "2") %>% select(-IndClaCd) 
-
-# the paying attention resource disclosure by stock exchange, yearly data
-AF_Cfeature <- read_delim('./Acc_Annual/AF_CFEATUREPROFILE.txt', 
-                          delim = '\t', na = '',
-                          col_types = cols_only(
-                                Stkcd = col_character(),
-                                Accper = col_date(format = "%Y-%m-%d"),
-                                CompanySize = col_double(),
-                                # the number of analysis teams
-                                AnaAttention = col_integer(), 
-                                # the number of analysis reports
-                                ReportAttention = col_integer(), 
-                                # the information opacity of company 
-                                CompanyOpacity = col_character()
-                                )
-        )
-
-# Import the status data of quarterly financial report 
-ReptInfo <- read_delim('./Acc_Quarter/IAR_Rept.txt', 
-                       delim = '\t', na = '',
-                       col_types = cols_only(
-                               Stkcd = col_character(),
-                               # 1:4, first quarter, mid of year, third quarter, 
-                               # and year earnings report
-                               Reptyp = col_factor(levels = c(1:4)),
-                               # the deadline of accounting cycle
-                               Accper = col_date(format = "%Y-%m-%d"),
-                               # the date when report was discolsed
-                               Annodt = col_date(format = "%Y-%m-%d"),
-                               # the day of week when report was discolsed
-                               # c(0:6): Sun < Mon < Tue < Wed < Thu < Fri < Sat
-                               Annowk = col_factor(levels = c(0:6)),
-                               # net profits and earnings per share
-                               Profita = col_double(), Erana = col_double()
-                               )
-        )
-# we could observe that the symbols of stocks belong to China A-Share markets
-# are begin with number c(0, 3, 6),
-# so we use regular expression and string function 'grepl' to filter others 
-if (nrow(problems(ReptInfo)) >= 0L) {
-        ReptInfo %<>% `[`(-unique(problems(.)$row), ) %>% 
-                filter(grepl('^[0-6]', Stkcd)) %>% 
-                arrange(Stkcd, Accper)
-}
 
 
 for (q in seq_along(Accprd_seq)) {
@@ -380,7 +323,7 @@ for (q in seq_along(Accprd_seq)) {
     
     # Obtain the OLS estimate parameters =====
     # function `tidy` return estimate, std.error, statistic, p.value 
-    stkest_ff %<>% mutate("lm" = map(data, ~ mod_lm(.x) %>% tidy))
+    stkest_ff %<>% mutate("lm" = map(data, ~ tidy(lm(formula = model_formula, data = .x))))
     OLScoef <- select(stkest_ff, Stkcd, lm) %>% unnest(cols = "lm")
     # save the OLS estimate, compared with MATLAB's
     mod_write(OLScoef, file_name = "OLScoef")
@@ -568,8 +511,10 @@ for (q in seq_along(Accprd_seq)) {
             geom_smooth() + 
             geom_point(aes(shape = g_PLS), size = 2) +
             scale_color_brewer(palette = "Set1") +
-            scale_x_continuous(breaks = seq(-30, 30, by = 5), labels = seq(-30, 30, by = 5)) + 
-            labs(x = "Time line", title = 'The standard deviation of stock\'s real daily returns') + 
+            scale_x_continuous(breaks = seq(-30, 30, by = 5)) + 
+            labs(x = "Time line", 
+                 title = 'The standard deviation of stock\'s real daily returns'
+                 ) + 
             theme_bw() +
             theme(plot.title = element_text(size = 12),
                   axis.ticks = element_blank(),

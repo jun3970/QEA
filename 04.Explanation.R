@@ -29,9 +29,18 @@ library(DBI)
 library(RSQLite)
 library(dbplyr)
 
-# Self function -----------------------------------------------------------
-
+# Specifying the basic data attributes -------------------------------------
 source('~/R/QEA/QEA.R/function_QEA.R')
+load(file = "./ReportInfo.RData"); rm(PreRept)
+
+Accprd <- ymd('2017-09-30')
+model_type <- as.character('CH3')
+Pretype <- 6L
+Markettype <- 21L
+subsam <- FALSE
+
+
+# Self function -----------------------------------------------------------
 
 # generate a summary table of our variable (feature) by package gt
 gt_var_sum <- function(statistic) {
@@ -156,15 +165,9 @@ lm_cs <- function(df, model_type, SE_type = "stata", ...) {
     return(lm_result)
 }
 
-    
-# Specifying the basic data attributes -------------------------------------
-Accprd <- ymd('2017-09-30')
-model_type <- as.character('CH3')
-Pretype <- 6L
-Markettype <- 21L
-subsam <- FALSE
 
 # read and tidy data ----------------------------------------------------
+
 setwd(file.path('~/OneDrive/Data.backup/QEAData', 
                 model_type, year(Accprd), Accprd
                 )
@@ -262,28 +265,6 @@ dbDisconnect(QEA_db)
 Acc_ind %<>% arrange(Stkcd, Accper) %>% 
         mutate(Accper = as.Date(Accper, origin = "1970-01-01"))
 
-# Import the accounting data within quarterly financial report 
-ReptInfo <- read_delim('~/OneDrive/Data.backup/QEAData/Acc_Quarter/IAR_Rept.txt', 
-                       delim = '\t', na = '', 
-                       col_types = cols_only(
-                               Stkcd = col_character(),
-                               # the deadline of accounting cycle
-                               Accper = col_date("%Y-%m-%d"),
-                               # the date when report was disclosure
-                               Annodt = col_date("%Y-%m-%d"),
-                               # net profits and earnings per share
-                               Profita = col_double(), 
-                               Erana = col_double()
-                               )
-        ) %>% 
-        filter(Stkcd %in% stk_sam) %>%  # stocks in sample
-        filter(Accper %in% qtr_term)  # specific quarter
-# Attention! there are some problem observations, we choose to delete them
-if (nrow(problems(ReptInfo)) >= 0L) {
-        ReptInfo %<>% `[`(-unique(problems(.)$row), ) %>% 
-                filter(grepl('^[0-6]', Stkcd)) %>% 
-                arrange(Stkcd, Accper)
-}
 # add explanation variables about quarterly accounting status of stocks
 ReptInfo %<>% left_join(Acc_ind, by = c("Stkcd", "Accper"))
 
