@@ -88,7 +88,7 @@ wind_eve_bh <- +30L
 # Part I, set the value of critical parameters ----------------------------
 
 # the kind of factor models we will select
-model_type <- "CH4"
+model_type <- "CH3"
 # how much accounting periods will be running?
 len_term <- 4*5
 # the ending date of the first accounting period
@@ -130,10 +130,20 @@ if (model_type == "CH3") {
         ff_term <- c("mkt_rf", "SMB", "VMG")
         model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + VMG)
 
+} else if (model_type == "FF3") {
+    
+        ff_term <- c("mkt_rf", "SMB", "HML")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + HML)
+
 } else if (model_type == "CH4") {
     
         ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
         model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + VMG + RMW)
+
+} else if (model_type == "FF4") {
+    
+        ff_term <- c("mkt_rf", "SMB", "HML", "WML")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + HML + WML)
 
 } else if (model_type == "FF5") {
 
@@ -317,8 +327,7 @@ for (y in seq_along(Accprd)) {  # loop in year
         } else stop(glue("{Accprd[[y]][q]}, errors existed in the event-window!"))
     
     
-        
-        # Part IV, data visualization -----------------------------------------
+        # data visualization ---------------------------------------------
         
         # cluster the stocks based on circulated market value
         g.stk <- group_by(bind_rows(trdeve), Stkcd) %>% 
@@ -349,8 +358,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, colour = g.Size)) +
                             labs(y = "Average return of potfolio different in Size",
-        title = "The path of average daily returns around earnings report announcement date",
-        subtitle = glue("from {(Accprd[[y]][q]+days(1))%m+%months(-3)} to {Accprd[[y]][q]}")
+                    title = "The path of average daily returns around earnings report announcement date",
+                    subtitle = glue("from {(Accprd[[y]][q]+days(1))%m+%months(-3)} to {Accprd[[y]][q]}")
                                  ) +
                             theme_bw() +
                             theme(legend.position = "bottom",
@@ -362,8 +371,9 @@ for (y in seq_along(Accprd)) {  # loop in year
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, colour = g.Size)) +
                             facet_wrap(~ Markettype, nrow = 3) +
-                                labs(title = "Facets by market type",
-                                     y = "Average return of potfolio different in Size") +
+                                labs(y = "Average return of potfolio different in Size",
+                                     title = "Facets by market type"
+                                     ) +
                                 theme_bw() +
                                 theme(legend.position = "none")
     
@@ -382,7 +392,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, color = Indus)) +
                             labs(y = "Average return",
-        title = "Average returns of stocks around announcement date across industries"
+                    title = "Average returns of stocks around announcement date across industries"
                                  ) +
                             scale_color_manual(values = col_vector) +
                             theme_economist() +
@@ -398,7 +408,7 @@ for (y in seq_along(Accprd)) {  # loop in year
 
 rm(list = setdiff(ls(), c("Accprd", "model_type"))); gc()
 
-# Path of stock returns when earnings report are released ====
+# Part IV, Path of stock returns when earnings report are released --------
 
 # function to add the time line, tau, for every stocks 
 add_tau_stk <- function(df) {
@@ -412,7 +422,7 @@ add_tau_stk <- function(df) {
         df %<>% map_dfr(~ mutate(arrange(.x, TradingDate), 
                                  "tau" = factor(time_line, ordered = TRUE)
                                  )
-                )
+                        )
         
     } else stop("Error! The length of time line of stocks are not all equal to a value.")
     
@@ -473,7 +483,7 @@ for (y in seq_along(Accprd)) { # loop in years
 }
 
 
-# Regression P/E on factors -----------------------------------------------
+# Part V, Regression P/E on coefficients of factors ----------------------
 
 library(DBI)
 library(RSQLite)
@@ -502,8 +512,12 @@ stkcd_quarter <- dir(path = file.path('~/OneDrive/Data.backup/QEAData', model_ty
         map(pull, "Stkcd") %>% 
         `names<-`(Accprd)
 
-reg_EP_on_ff <- vector(mode = 'list', length = length(Accprd)) %>% 
-        `names<-`(Accprd)
+reg_EP_ff <- vector(mode = 'list', length = length(Accprd)) %>% 
+        `names<-`(Accprd) %>% 
+        # save the regression data and OLS result
+        map(~ vector(mode = "list", length = 2L) %>%  
+                set_names(c("data", "lm_est"))  
+            )
 
 for (i in seq_along(Accprd)) {
     
@@ -535,26 +549,33 @@ for (i in seq_along(Accprd)) {
             `[`(map_lgl(.$data, ~ nrow(.x) >= 30L), )
     
     # running regression about stock returns on multiple factors 
-    reg_quarter %<>%
-            mutate("lm_est" = map(data, ~ tidy(lm(formula = formula(model_formula, lhs = 1), 
-                                                  data = .x,
-                                                  )
-                                               ) %>% 
-                                          select(term, estimate)
-                                  )
+    reg_quarter %<>% mutate( 
+            "lm_est" = map(data, ~ lm(formula = formula(model_formula, lhs = 1), data = .x) %>% 
+                                   tidy() %>% 
+                                   select(term, estimate)
+                           )
             ) %>% 
             select(Stkcd, lm_est) %>% 
             unnest(cols = "lm_est") %>% 
-            spread(key = term, value = estimate) %>% 
-            right_join(ReptInfo_Acc_PE, by = "Stkcd")
+            spread(key = term, value = estimate) 
+    
+    # join the explained variable `EP` with predictors 
+    reg_quarter %<>% 
+            right_join(select(ReptInfo_Acc_PE, Stkcd, EP, EPS), by = "Stkcd")
+    
+    reg_EP_ff[[i]]$data <- reg_quarter
             
     # running regression about EP ratio on estimate coefficients of factors 
-    reg_EP_on_ff[[i]] <- lm(formula = formula(model_formula, lhs = 2), 
-                            data = reg_quarter
-                            ) 
+    reg_EP_ff[[i]]$lm_est <- lm(formula = formula(model_formula, lhs = 2), 
+                                data = reg_quarter
+                                ) 
 
 }
 
-map_dfr(reg_EP_on_ff, tidy, .id = "quarter") %T>% 
-        View() %>% 
-        save(file = glue('~/OneDrive/Data.backup/QEAData/reg_EP_on_ff_{model_type}.RData'))
+save(reg_EP_ff, 
+     file = glue('~/OneDrive/Data.backup/QEAData/reg_EP_ff_{model_type}.RData')
+     )
+
+map(reg_EP_ff, "lm_est") %>% 
+        map_dfr(tidy, .id = "quarter") %>% 
+        View()

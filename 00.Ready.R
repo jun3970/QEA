@@ -357,8 +357,8 @@ PreRept <- read_delim('./Acc_Quarter/FIN_F_ForecFin.txt',
         rename('Stkcd' = StockCode) %>% 
         filter(grepl('^[0-6]', Stkcd))
 
-save(ReptInfo,
-     PreRept,
+save(ReptInfo,  # the key accounting index in quarterly earnings reports
+     PreRept,  # the pre-disclosure report of stocks which operated unexpected 
      file = "./ReportInfo.RData"
      )
 
@@ -390,7 +390,9 @@ AF_Cfeature <- read_delim('./Acc_Annual/AF_CFEATUREPROFILE.txt',
                                 )
         )
 
-save(AF_Co,
-     AF_Cfeature,
+save(AF_Co,  # the information of listed date and industry of stocks 
+     AF_Cfeature,  
+     # the market size, the number of analysis team following, 
+     # and how much survey papers are issued (opacity of company)
      file = "./FirmAttr.RData"
      )

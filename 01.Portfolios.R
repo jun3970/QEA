@@ -1025,9 +1025,7 @@ if (model_type %in% c("CH3", "CH4", "FF3", "FF4")) {
 
 # visualizing ====
 
-if (model_type == "CAPM") {
-    
-    # the distribution of the estimator of beta (CAPM) ====
+if (model_type == "CAPM") { # the distribution of the estimator of beta (CAPM) ====
     
     variable <- "mkt_rf"
     estimator <- "estimate"
