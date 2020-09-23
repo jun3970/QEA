@@ -15,8 +15,6 @@ library(RColorBrewer)
 # display.brewer.all()
 library(ggthemes)
 
-source('~/R/QEA/QEA.R/function_QEA.R')
-
 # Part I, import data and assign parameter -------------------------------
 
 setwd('~/OneDrive/Data.backup/QEAData')
@@ -27,16 +25,18 @@ load(file = "./ReportInfo.RData"); rm(PreRept)
 
 # assign basic parameters about quarter and sample attributes ====
 # quarter sequence
-Accprd_seq <- months(seq(from = 0, by = 3, length = 4)) %>% 
-        mapply('%m+%', ymd('2017-03-31'), .) %>% 
+Accprd_seq <- months(seq(from = 0, by = 3, length = 1)) %>% 
+        mapply('%m+%', ymd('2017-09-30'), .) %>% 
         base::as.Date(origin = '1970-01-01') %>% 
         # split by year
-        split(., year(.))
+        split(., f = year(.))
 
 # the type of stocks that weather had publish pre-report
 Pretype <- 6L  
 # the market types that the stocks in our sample
 Markettype <- 21L
+# the model to measure the normal return
+model_type <- "CH4"
 # whether assign a character to value_base, EPS, CFPS,
 # if not, represent that we will regress traditional Fama-French multi-factor model
 value_base <- "EPS"
@@ -45,6 +45,47 @@ subsam <- FALSE
 ## if the value of `subsam` is a number, for example, subsam <- 300L
 ## the analysis results of below script will just based on a sub-sample
 
+
+# Asset pricing model, CAPM, CH3 or FF5? 
+if (model_type == "CAPM") {
+    
+        ff_term <- c("mkt_rf")
+        model_formula <- Formula(Dret_rf ~ mkt_rf)
+        
+} else if (model_type == 'FF3') {
+            
+        ff_term <- c("mkt_rf", "SMB", "HML")
+        model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + HML)
+        
+} else if (model_type == "FF4") { 
+            
+        ff_term <- c("mkt_rf", "SMB", "HML", "WML")
+        model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + HML + WML)
+        
+} else if (model_type == "FF5") {
+        
+        ff_term <- c("mkt_rf", "SMB", "HML", "RMW", "CMA")
+        model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + HML + RMW + CMA)
+        
+} else if (model_type == "CH3") {
+        
+        if (value_base %in% c("EPS", "CFPS")) {    
+    
+                ff_term <- c("mkt_rf", "SMB", "VMG")
+                model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + VMG)
+        
+        } else stop("Please input the class information of value.")
+        
+} else if (model_type == "CH4") {
+        
+        if (value_base %in% c("EPS", "CFPS")) {
+            
+                ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
+                model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + VMG + RMW)
+                
+        } else stop("Please input the class information of value.")
+
+}           
 
 # Part II, calculate the grouped abnormal returns (AR) and cumulative AR ----
 
@@ -66,12 +107,15 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
        
         # Read the result from MATLAB, PLS (su, 2016) --------------------
         
-        # Group information
+        # Group information ====
         PLSclus <- dir(path = file.path('~/OneDrive/Data.backup/QEAData',
                                         'Matlab_PLS', 
                                         year(Accprd)
                                         ),
-                       pattern = paste("group", Accprd, Pretype, Markettype, sep = '_'),
+                       pattern = paste("group", Accprd, Pretype, Markettype, 
+                                       model_type, 
+                                       sep = '_'
+                                       ),
                        recursive = TRUE,
                        full.names = TRUE
                        ) %>% 
@@ -88,21 +132,15 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         # save the quarterly cluster result (PLS)
         PLS_grp[[y]][[q]]$cluster <- PLSclus
         
-        # rename the group identity
-        if (grp_num == 2) {
-                grp_name <- c("group one", "group two")
-        } else if (grp_num == 3)  {
-                grp_name <- c("group one", "group two", "group three")
-        } else if (grp_num == 4) {
-                grp_name <- c("group one", "group two", "group three", "group four")
-        } else stop("The group number is not included in script!")
-        
-        # PLS coefficients
+        # PLS coefficients ====
         PLScoef <- dir(path = file.path('~/OneDrive/Data.backup/QEAData',
                                         'Matlab_PLS', 
                                         year(Accprd)
                                         ),
-                       pattern = paste("PLS", Accprd, Pretype, Markettype, sep = '_'),
+                       pattern = paste("PLS", Accprd, Pretype, Markettype, 
+                                       model_type, 
+                                       sep = '_'
+                                       ),
                        recursive = TRUE,
                        full.names = TRUE
                        ) %>% 
@@ -111,53 +149,6 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         for (i in 1:grp_num) {
                 names(PLScoef)[seq(1:3) + 3*(i-1)] <- 
                         paste0(c('coef', 'sd', 't'), '_', 'g', i)
-        }
-        
-        # Asset pricing model, CAPM, CH3 or FF5? 
-        if (nrow(PLScoef) == 3) {
-                
-                if (value_base %in% c("EPS", "CFPS")) {    
-            
-                        model_type <- 'CH3'
-                        ff_term <- c("mkt_rf", "SMB", "VMG")
-                        model_formula <- Formula(Dret_rf | EP | PE ~ mkt_rf + SMB + VMG)
-                
-                } else {
-                    
-                        model_type <- 'FF3'
-                        ff_term <- c("mkt_rf", "SMB", "HML")
-                        model_formula <- Formula(Dret_rf | EP | PE ~ mkt_rf + SMB + HML)
-                    
-                }
-                
-        } else if (nrow(PLScoef) == 4) {
-                
-                if (value_base %in% c("EPS", "CFPS")) {
-                    
-                        model_type <- 'CH4'
-                        ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
-                        model_formula <- Formula(Dret_rf | EP | PE ~ mkt_rf + SMB + VMG + RMW)
-                        
-                } else {
-                    
-                        model_type <- 'FF4'
-                        ff_term <- c("mkt_rf", "SMB", "HML", "WML")
-                        model_formula <- Formula(Dret_rf | EP | PE ~ mkt_rf + SMB + HML + WML)
-                        
-                }
-                
-        } else if (nrow(PLScoef) == 5) {
-                
-                model_type <- 'FF5'
-                ff_term <- c("mkt_rf", "SMB", "HML", "RMW", "CMA")
-                model_formula <- Formula(Dret_rf | EP | PE ~ mkt_rf + SMB + HML + RMW + CMA)
-                
-        } else if (nrow(PLScoef) == 1) {
-                
-                model_type <- 'CAPM'
-                ff_term <- c("mkt_rf")
-                model_formula <- Formula(Dret_rf | EP | PE ~ mkt_rf)
-                
         }
         
         # add the factor identity column
@@ -173,9 +164,39 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                         )
               )
         # import data of estimate window
-        stkest <- mod_read("stkest") %>% split(.$Stkcd)
+        stkest <- dir(pattern = paste(Accprd, Pretype, Markettype, model_type, 
+                                      "stkest", 
+                                      sep = '_'
+                                      ),
+                      full.names = TRUE
+                      ) %>%
+                read_csv(na = '',
+                         col_types = cols(
+                                 Stkcd = col_character(),
+                                 Markettype = col_factor(levels = c(1,4,16)),
+                                 Indus = col_factor(),  # industry category
+                                 Annowk = col_factor()  # the day of week
+                                 )
+                         ) %>% 
+                split(.$Stkcd)
+        
         # import data of event window
-        stkeve <- mod_read("stkeve") %>% split(.$Stkcd)
+        stkeve <- dir(pattern = paste(Accprd, Pretype, Markettype, model_type, 
+                                      "stkeve", 
+                                      sep = '_'
+                                      ),
+                      full.names = TRUE
+                      ) %>%
+                read_csv(na = '',
+                         col_types = cols(
+                                 Stkcd = col_character(),
+                                 Markettype = col_factor(levels = c(1,4,16)),
+                                 Indus = col_factor(),  # industry category
+                                 Annowk = col_factor()  # the day of week
+                                 )
+                         ) %>% 
+                split(.$Stkcd)
+        
         # the sample size
         if (is.numeric(subsam)) { # take a subset sample
             
@@ -184,11 +205,15 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                 stkest %<>% `[`(stk_sam)
                 stkeve %<>% `[`(stk_sam)
                 
-        } else if (`==`(subsam, FALSE)) print("Analysis the whole sample.")
+        } else if (`==`(subsam, FALSE)) print("Whole sample will be analysis.")
         # the number of stocks in our sample
         N <- length(stkeve)
         # the time series period of event window
-        TS <- nrow(stkeve[[N]])
+        if(`==`(length(unique(map_int(stkeve, nrow))), 1)) {
+    
+                TS <- unique(map_int(stkeve, nrow))
+    
+        } else stop("The time series number of window trading data are not same.")
         # the time line of event window
         timeline <- seq(-(TS - 1L) / 2, (TS - 1L) / 2)
         
@@ -206,13 +231,23 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         
         
         # visual the group external relationship --------------------------
+        figure_term <- paste(Accprd, Pretype, Markettype, model_type, sep = '_')
         
         # link the PLS cluster result with stocks feature and 
         # accounting indicators from quarterly earnings report 
         
         # rename the group identity using in plot (legend guide)
+        if (grp_num == 2) {
+                grp_name <- c("group one", "group two")
+        } else if (grp_num == 3)  {
+                grp_name <- c("group one", "group two", "group three")
+        } else if (grp_num == 4) {
+                grp_name <- c("group one", "group two", "group three", "group four")
+        } else stop("The group number is not included in script!")
+        
         PLSclus$g_PLS %<>% factor(levels = 1:grp_num, labels = grp_name) 
         # 1 = group one, 2 = group two, 3 = group three...
+        
         
         # history 
         left_join(PLSclus, AF_Co, by = "Stkcd") %>% 
@@ -224,7 +259,10 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                         theme_bw() + 
                         theme(axis.title.x = element_blank())
             
-        mod_figure(file_name = "Density-ghistory", fig_ratio = 2L, scale = 1)
+        ggsave(filename = paste(figure_term, "history.pdf", sep = '_'), 
+               width = 8, height = 6, 
+               scale = 1
+               )
         
         # industry 
         left_join(PLSclus, AF_Co, by = "Stkcd") %>% 
@@ -242,7 +280,10 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                                       axis.title.y = element_text(margin = margin(r = 10))
                                       ) 
         
-        mod_figure("histogram-gIndustry", fig_ratio = 2L, scale = 1.2)
+        ggsave(filename = paste(figure_term, "Industry.pdf", sep = '_'),
+               width = 8, height = 6, 
+               scale = 1.2
+               )
         
         
         # the information from ReptInfo 
@@ -280,7 +321,10 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                               axis.title.y = element_text(margin = margin(r = 10))
                               ) 
         
-        mod_figure("histogram-gWeekday", fig_ratio = 2L, scale = 1)
+        ggsave(filename = paste(figure_term, "Weekday.pdf", sep = '_'),
+               width = 8, height = 6, 
+               scale = 1
+               )
         
         
         # the information from AF_Cfeature
@@ -312,7 +356,10 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                         theme(axis.title.x = element_blank(),
                               legend.position = "none")
         
-        mod_figure("histogram-gAttention", fig_ratio = 2L, scale = 1)
+        ggsave(filename = paste(figure_term, "Attention.pdf", sep = '_'),
+               width = 8, height = 6, 
+               scale = 1
+               )
         
         # the internal distrubution of different opacity levels firms in each group
         count(g_accfea, g_PLS, CompanyOpacity) %>% na.omit() %>%
@@ -328,7 +375,10 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                               legend.position = "top"
                               )
         
-        mod_figure("histogram-gOpacity", fig_ratio = 2L, scale = 1)
+        ggsave(filename = paste(figure_term, "Opacity.pdf", sep = '_'), 
+               width = 8, height = 6,
+               scale = 1
+               )
         
         g_accfea %<>% gather(c(AnaAttention, ReportAttention),
                              key = 'AttentionType', value = 'Attention'
@@ -367,16 +417,20 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                               plot.title = element_text(size = 12),
                               )
         
-        mod_figure("histogram-Opacity", fig_ratio = 2L, scale = 1)
+        ggsave(filename = paste(figure_term, "Opacity-cor.pdf", sep = '_'),
+               width = 8, height = 6, 
+               scale = 1
+               )
         
         
         # Calculate AR and CAR within event window -----------------------
         
         # the correlation coefficient between explanation variables ====
-        stkest_ff <- map_dfr(stkest, select, c("Stkcd", "Dret_rf", all_of(ff_term))) %>% 
-                group_nest(Stkcd) %>% 
+        stkest_ff <- tibble('Stkcd' = names(stkest),
+                            'data' = map(stkest, select, c("Dret_rf", all_of(ff_term)))
+                            ) %>% 
                 mutate("cor_var" = map(data, ~ cor( select(.x, - c("Dret_rf")) ))) 
-        
+
         # Obtain the OLS estimate parameters =====
         # function `tidy` return estimate, std.error, statistic, p.value 
         stkest_ff %<>% mutate("lm" = map(data, ~ lm(data = .x,
@@ -387,7 +441,13 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                               )
         OLScoef <- select(stkest_ff, Stkcd, lm) %>% unnest(cols = "lm")
         # save the OLS estimate, compared with MATLAB's
-        mod_write(OLScoef, file_name = "OLScoef")
+        write.csv(OLScoef, 
+                  file = paste(Accprd, Pretype, Markettype, model_type, 
+                               'OLScoef.csv', 
+                               sep = '_'
+                               ),
+                  quote = F, row.names = F
+                  )
         
         # gather the data in panel form to plot the distribution of estimators
         QEA_ggOLS <- gather(OLScoef, estimate:p.value, 
@@ -413,7 +473,10 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                       axis.title.x = element_text(margin = margin(t = 7))
                       )
         
-        mod_figure("Intercept", fig_ratio = 2L, scale = 1)
+        ggsave(filename = paste(figure_term, "Intercept.pdf", sep = '_'),
+               width = 8, height = 6, 
+               scale = 1
+               )
         
         # the distribution of coefficients of explanation variables 
         f_coef <- filter(QEA_ggOLS, term != "(Intercept)" & Statistics == "estimate") %>% 
@@ -464,8 +527,13 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                ) %>% 
                 right_join(bind_rows(QEA_AR), by = "Stkcd") %>% 
                 # export as csv file
-                mod_write("gAR")
-        
+                write.csv(quote = F, row.names = F,
+                          file = paste(Accprd, Pretype, Markettype, model_type, 
+                                       'gAR.csv', 
+                                       sep = '_'
+                                       )
+                          )
+                
         # the second, layout in columns (tau)  and use it to calculate the mean of AR_tau
         QEA_gAR <- map(QEA_AR, "AbRet") %>% 
                 bind_cols() %>% 
@@ -811,39 +879,3 @@ ggsave(filename = "distribution_EP_grp.pdf",
        width = 16, height = 9
        )
 
-# load the data of OLS estimate coefficients of factors    
-load(file = glue("~/OneDrive/Data.backup/QEAData/reg_EP_ff_{model_type}.RData"))
-# join with group information
-reg_grp_PEE_ff <- map(reg_EP_ff, "data") %>% 
-        enframe(name = "Accper", value = "data") %>% 
-        inner_join(PLS_grp_PE, ., by = c("Accper"))
-# run regression of PE (or EP, EPS) on coefficients of factors
-reg_grp_PEE_ff %<>% 
-        transmute(Accper, g_PLS,
-                  inter_data = map2(data, inter_PE, inner_join, by = "Stkcd"),
-                  unstable_data = map2(data, unstable_PE, inner_join, by = "Stkcd")
-                  ) %>% 
-        transmute(Accper, g_PLS,
-                  'lm_PE_inter' = map(inter_data, ~ lm(data = .x,
-                                                  formula = formula(model_formula, 3)
-                                                  ) %>% 
-                                                broom::tidy()
-                                 ),
-                  'lm_PE_unstable' = map(unstable_data, ~ lm(data = .x,
-                                                        formula = formula(model_formula, 3)
-                                                        ) %>% 
-                                                   broom::tidy()
-                                    )
-               )
-
-reg_grp_PEE_ff %<>% gather(c('lm_PE_inter', 'lm_PE_unstable'),
-                           key = 'class', value = 'value'
-                           ) %>% 
-        unnest(cols = value) %>% 
-        arrange(term, class, Accper, g_PLS) %T>% 
-        View()
-
-# export 
-write.csv(reg_grp_PEE_ff, 
-          file = glue('~/OneDrive/Data.backup/QEAData/reg_PE_ff_{model_type}_grp.csv')
-          )

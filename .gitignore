@@ -36,9 +36,8 @@ vignettes/*.pdf
 *.knit.md
 
 # attach
-PLS/
+meeting/
 figure/
-*slide_files/
 *.pdf
 *.tex
 *.bat

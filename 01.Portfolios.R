@@ -124,20 +124,21 @@ library(RColorBrewer)
 # function to query accounting data in reports from SQLite database
 # the argument, report_type, represent the type of earnings report
 # A, union report of institution, B, the parent company
-tbl_query <- function(database = QEA_db, table_name, 
+tbl_query <- function(database = QEA_db, 
+                      table_name, 
                       report_type = "A", 
                       date = ahead_period, 
                       stkcd = names(trdwin)
                       ) {
 
     tbl(database, table_name) %>% 
-            filter(Accper %in% !!as.integer(date)) %>% 
-            filter(Stkcd %in% !!stkcd) %>% 
-            filter(Typrep == report_type) 
+    filter(Typrep == report_type) %>% 
+    filter(Accper %in% !!as.integer(date)) %>% 
+    filter(Stkcd %in% !!stkcd)
     
 }
 
-# change a new value to the default argument for a function
+# change the default arguments of function
 cut <- purrr::partial(cut, ordered_result = TRUE, include.lowest = TRUE)
 summarise <- purrr::partial(summarise, .groups = 'drop')
 
@@ -146,7 +147,7 @@ summarise <- purrr::partial(summarise, .groups = 'drop')
 
 # set the type of multi-factor model
 # CAPM, CH3 (Liu, 2018), CH4, CH5 (Fama-French, 2015)
-model_type <- "FF3"
+model_type <- "CH4"
 
 # set the type of interval of time period, yearly or quarterly?
 period_type <- "quarterly"  
@@ -510,7 +511,7 @@ for (q in seq_along(Accprd)) {  # loop in time period
     
     # mkt_rf, the returns of market risk subtracted risk-free rate of that day 
     # select(.x, c(Stkcd, TradingDate, Dretnd, Dsmvosd, Markettype, Indus))
-    trdff %<>% map(~ left_join(Nrrate, 
+    trdff %<>% map(~ right_join(Nrrate, 
                                select(.x, c(Stkcd, TradingDate, Dretnd, Dsmvosd)),
                                by = 'TradingDate'
                                )
@@ -930,7 +931,7 @@ for (q in seq_along(Accprd)) {  # loop in time period
                                       .id = "Stkcd"
                                       )
     
-    } else if (model_type %in% c("CH3", "Ch4", "FF3", "FF4", "FF5")) {
+    } else if (model_type %in% c("CH3", "CH4", "FF3", "FF4", "FF5")) {
             
             potfolreg[[q]] <- trd_reg %>% 
                     group_by_if(is.factor) %>% 
@@ -944,10 +945,12 @@ for (q in seq_along(Accprd)) {  # loop in time period
     
 }
 
-ifelse(model_type %in% c("CH3", "CH4"), 
-       save(potfolreg, file = glue("./{model_type}/{period_type}_{value_base}_{model_type}.RData")),
-       save(potfolreg, file = glue("./{model_type}/{period_type}_{model_type}.RData"))
-       )
+if (model_type %in% c("CH3", "CH4")) {
+    
+    save(potfolreg, file = glue("./{model_type}/{period_type}_{value_base}_{model_type}.RData"))
+    
+} else save(potfolreg, file = glue("./{model_type}/{period_type}_{model_type}.RData"))
+       
 
 dbDisconnect(QEA_db)
 

@@ -15,7 +15,7 @@ library(ggthemes)
 summarise <- purrr::partial(summarise, .groups = 'drop')
 
 # function to extract daily trading data of a specific time range ====
-mod_extract <- function(df, behind, ahead, type) {
+window_extract <- function(df, behind, ahead, type) {
     
     annodt <- unique(subset(df, Accper == subAccprd, select = Annodt, drop = T))
     
@@ -58,41 +58,15 @@ mod_extract <- function(df, behind, ahead, type) {
         
 } 
 
-# Assign the window time index ====
-# It is about twenty trading dates in a calendar month, 
-# and 240 trading dates in a calendar year. 
-#
-# structure the whole window: 321 days
-# using data that behind and fore to report announcement date
-wind_ex <- -160L
-wind_bh <- +160L
-# # If we want to use the history trading data to contract window,
-# # we just need to assign the window index with
-# wind_ex <- -280
-# wind_bh <- +40
-#
-# structure the estimate window: 240 days
-wind_est_ex <- -40L
-wind_est_bh <- +40L
-# when we split the trading data around report announcement data into 
-# estimate window and event window, we need two parameters to 
-# define the time periods range
-#
-# structure the event window; 61 days
-wind_eve_ex <- -30L
-wind_eve_bh <- +30L
-# Note that we discard ten (two weeks) daily trading data before announcement date
-# and ten (two weeks) daily trading data after announcement date
 
+# Part I, setup the value of critical parameters ---------------------------
 
-# Part I, set the value of critical parameters ----------------------------
-
-# the kind of factor models we will select
-model_type <- "CH3"
 # how much accounting periods will be running?
 len_term <- 4*5
 # the ending date of the first accounting period
 start_term <- ymd('2013-03-31')
+# factor model will be running
+model_type <- "CH4"
 # set up the market class
 # 1=SHA, 4=SZA, 16=start-up, 5=1+4, 21=1+4+16
 Markettype <- 21L 
@@ -108,53 +82,36 @@ Pre_type <- 6L
 ## 5, Remove the companies that published regular announcements in the total sample
 ## If including all of stocks, enter 6 (actually, all numbers except above is OK)
 
+# Assign the window time index ====
+# It is about twenty trading dates in a calendar month, 
+# and 240 trading dates in a calendar year. 
+#
+# structure the whole window: 321 days
+# using data that behind and fore to report announcement date
+wind_behind <- -160L
+wind_ahead <- +160L
+# # If we want to use the history trading data to contract window,
+# # we just need to assign the window index with
+# wind_behind <- -280
+# wind_ahead <- +40
+#
+# structure the estimate window: 240 days
+wind_est_behind <- -40L
+wind_est_ahead <- +40L
+# when we split the trading data around report announcement data into 
+# estimate window and event window, we need two parameters to 
+# define the time periods range
+#
+# structure the event window; 61 days
+wind_eve_behind <- -30L
+wind_eve_ahead <- +30L
+# Note that we discard ten (two weeks) daily trading data before announcement date
+# and ten (two weeks) daily trading data after announcement date
 
-# Part II, importing essential data ----------------------------------------
+# automatically create directories and import some essential data ====
 
 # setup the working directory 
 setwd('~/OneDrive/Data.backup/QEAData/')
-# import daily trading data of stocks, trddat
-# and trading date of China A-share markets, trdday
-load(file = './PrePotfol.RData')
-# import accounting information from reports
-load(file = "./ReportInfo.RData")
-# import Fama-French factors (CH3, CH4, or FF5)
-load(list.files(path = glue("./{model_type}"),
-                pattern =  glue("{model_type}\\.RData$"),
-                full.names = TRUE
-                )
-     )
-# factor terms of regression model
-if (model_type == "CH3") {
-    
-        ff_term <- c("mkt_rf", "SMB", "VMG")
-        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + VMG)
-
-} else if (model_type == "FF3") {
-    
-        ff_term <- c("mkt_rf", "SMB", "HML")
-        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + HML)
-
-} else if (model_type == "CH4") {
-    
-        ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
-        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + VMG + RMW)
-
-} else if (model_type == "FF4") {
-    
-        ff_term <- c("mkt_rf", "SMB", "HML", "WML")
-        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + HML + WML)
-
-} else if (model_type == "FF5") {
-
-        ff_term <- c("mkt_rf", "SMB", "HML", "RMW", "CMA")
-        model_formula <- Formula(I(Dretnd - Nrrdaydt) | EP ~ mkt_rf + SMB + HML + RMW + CMA)
-
-}
-ff_factor <- map(potfolreg, "data") %>% 
-        # the factors are same among portfolios at every quarter
-        map_dfr(`[`(1L)) %>% 
-        select(TradingDate, all_of(ff_term))
 
 # the sequence of accounting periods
 Accprd <- months(seq(from = 0, by = 3, length = len_term)) %>% 
@@ -162,13 +119,62 @@ Accprd <- months(seq(from = 0, by = 3, length = len_term)) %>%
         base::as.Date(origin = '1970-01-01')
 # split by year
 Accprd <- split(Accprd, year(Accprd))
-# export directory
+# create export directory
 datdir <- file.path(model_type, names(Accprd))
+# annual
 if (!all(dir.exists(datdir))) mapply(dir.create, datdir)
+# quarterly
 for (i in seq_along(Accprd)) {
+    
     if (!all(dir.exists(file.path(model_type, names(Accprd)[i], Accprd[[i]])))) 
+        
         mapply(dir.create, file.path(model_type, names(Accprd)[i], Accprd[[i]]))
+    
 }
+
+# import daily trading data of stocks, trddat
+# and trading date of China A-share markets, trdday
+load(file = './PrePotfol.RData')
+# import accounting information from reports
+load(file = "./ReportInfo.RData")
+# import Fama-French factors data (CH3, CH4, or FF5)
+load(list.files(path = glue("./{model_type}"),
+                pattern =  glue("{model_type}\\.RData$"),
+                full.names = TRUE
+                )
+     )
+
+if (model_type == "CH3") {
+    
+        ff_term <- c("mkt_rf", "SMB", "VMG")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) ~ mkt_rf + SMB + VMG)
+
+} else if (model_type == "FF3") {
+    
+        ff_term <- c("mkt_rf", "SMB", "HML")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) ~ mkt_rf + SMB + HML)
+
+} else if (model_type == "CH4") {
+    
+        ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) ~ mkt_rf + SMB + VMG + RMW)
+
+} else if (model_type == "FF4") {
+    
+        ff_term <- c("mkt_rf", "SMB", "HML", "WML")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) ~ mkt_rf + SMB + HML + WML)
+
+} else if (model_type == "FF5") {
+
+        ff_term <- c("mkt_rf", "SMB", "HML", "RMW", "CMA")
+        model_formula <- Formula(I(Dretnd - Nrrdaydt) ~ mkt_rf + SMB + HML + RMW + CMA)
+
+}
+# withdraw the data of factors 
+ff_factor <- map(potfolreg, "data") %>% 
+        # the factors are same among portfolios at every quarter
+        map_dfr(`[`(1L)) %>% 
+        select(TradingDate, all_of(ff_term))
 
 # the color of category data used for plotting
 qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual', ]
@@ -179,7 +185,7 @@ col_vector <- unlist(mapply(brewer.pal,
                      )
 
 
-# Part III, contract window trading data --------------------------------
+# Part II, contract estimate window and event window ----------------------
 
 for (y in seq_along(Accprd)) {  # loop in year
 
@@ -197,10 +203,14 @@ for (y in seq_along(Accprd)) {  # loop in year
         
         # for saving memory and speed up the tidy process, we only reserve the 
         # trading data in recent two years before and after calendar accounting date
-        trdwin %<>% mutate(data = map(data, filter, 
-                TradingDate %within% interval(subAccprd %m+% months(-11L), subAccprd %m+% months(+13L))
+        trdwin %<>% mutate(data = map(data, 
+                                      filter, 
+                                      TradingDate %within% 
+                                          interval(subAccprd %m+% months(-11L), 
+                                                   subAccprd %m+% months(+13L)
+                                                   )
                                       )
-                ) %>% 
+                           ) %>% 
                 unnest(cols = "data") %>% 
                 split(.$Stkcd)
         
@@ -217,20 +227,25 @@ for (y in seq_along(Accprd)) {  # loop in year
                 lapply(mutate, 'Dret_rf' = Dretnd - Nrrdaydt) 
     
         
-        ###### Matching the time-line using self-function mod_extract #######
+        ###### Matching the time-line using self-function window_extract #######
         
         # construct the total times window, including estimate and event window 
-        trdwin %<>% lapply(mod_extract, wind_ex, wind_bh, "inner") %>% compact()
+        trdwin %<>% lapply(FUN = window_extract, 
+                           behind = wind_behind, ahead = wind_ahead, 
+                           type = "inner"
+                           ) %>% 
+                compact()
         
         # confirm the length of time series data have not existed error and 
         # aren't NaN value in data frame of stocks
-        if ( any(`==`(map_dbl(trdwin, nrow), wind_bh - wind_ex + 1L)) ) {
+        if ( any(`==`(map_dbl(trdwin, nrow), wind_ahead - wind_behind + 1L)) ) {
 
                 trdwin %<>% map(
                         ~ ifelse("=="(rowSums(is.na( .x )), 0L) %>% any(), 
                                  return(select(.x, Stkcd, TradingDate, Dretnd, Dsmvosd, 
                                                Dret_rf, all_of(ff_term), Nrrdaydt,
-                                               Accper, Annodt, Annowk, Markettype, Indus, Listdt
+                                               Accper, Annodt, Annowk, 
+                                               Markettype, Indus, Listdt
                                                )
                                         ),
                                  return(NULL) 
@@ -238,7 +253,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                         ) %>% 
                         compact() 
         
-        } else stop(glue("{Accprd[[y]][q]}, The time period of the whole window exist errors!"))
+        } else stop(glue("{Accprd[[y]][q]}, The whole window's period exist errors!"))
         
         # filter by market type ====
         if (Markettype %in% c(1L, 4L, 16L)) {
@@ -266,12 +281,18 @@ for (y in seq_along(Accprd)) {  # loop in year
             
         } else if (Pre_type == 4L) {
      
-                trdwin %<>% `[`(!(names(.) %in% pull(filter(subPreRept, Source == "0"), Stkcd))
+                trdwin %<>% `[`(!(names(.) %in% pull(filter(subPreRept, Source == "0"), 
+                                                     Stkcd
+                                                     )
+                                  )
                                 )
                 
         } else if (Pre_type == 5L) {
             
-                trdwin %<>% `[`(!(names(.) %in% pull(filter(subPreRept, Source == "1"), Stkcd))
+                trdwin %<>% `[`(!(names(.) %in% pull(filter(subPreRept, Source == "1"), 
+                                                     Stkcd
+                                                     )
+                                  )
                                 )
                 
         }
@@ -292,9 +313,13 @@ for (y in seq_along(Accprd)) {  # loop in year
         ## construct the estimate and event window =====
         
         # structure the estimation window
-        trdest <- lapply(trdwin, mod_extract, wind_est_ex, wind_est_bh, "outer") 
+        trdest <- lapply(trdwin, 
+                         FUN = window_extract, 
+                         behind = wind_est_behind, ahead = wind_est_ahead, 
+                         type = "outer"
+                         )
         
-        wind_est_len <- ((wind_bh - wind_ex) - (wind_est_bh - wind_est_ex))
+        wind_est_len <- ((wind_ahead - wind_behind) - (wind_est_ahead - wind_est_behind))
         
         if ( any(map_dbl(trdest, nrow) == wind_est_len) ) {
             
@@ -315,9 +340,13 @@ for (y in seq_along(Accprd)) {  # loop in year
         } else stop(glue("{Accprd[[y]][q]}, errors existed in the estimate-window!"))
         
         # structure the event window
-        trdeve <- lapply(trdwin, mod_extract, wind_eve_ex, wind_eve_bh, "inner")
+        trdeve <- lapply(trdwin, 
+                         FUN = window_extract, 
+                         behind = wind_eve_behind, ahead = wind_eve_ahead, 
+                         type = "inner"
+                         )
         
-        wind_eve_len <- wind_eve_bh - wind_eve_ex + 1L
+        wind_eve_len <- wind_eve_ahead - wind_eve_behind + 1L
         
         if ( any(map_dbl(trdeve, nrow) == wind_eve_len) ) {
             
@@ -340,7 +369,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                        )
         
         g.Dret <- lapply(trdeve, inner_join, g.stk, by = c("Stkcd")) %>% 
-                map_dfr(add_column, "timeline" = c(wind_eve_ex:wind_eve_bh)) %>% 
+                map_dfr(add_column, "timeline" = c(wind_eve_behind:wind_eve_ahead)) %>% 
                 mutate("Markettype" = factor(Markettype, 
                                              levels = c("1", "4", "16"),
                                              labels = c("Shanghai A Market", 
@@ -351,6 +380,11 @@ for (y in seq_along(Accprd)) {  # loop in year
                        )
         
         # compare the average returns among small and big portfolios by markets ====
+        title_char <- paste("The path of average daily returns", 
+                            "around earnings report announcement date",
+                            sep = ' '
+                            )
+        subtitle_char <- glue("from {(Accprd[[y]][q]+days(1))%m+%months(-3)} to {Accprd[[y]][q]}")
         
         # average daily returns grouped by Market type and time line
         figure_Dret <- group_by(g.Dret, timeline, g.Size) %>% 
@@ -358,8 +392,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, colour = g.Size)) +
                             labs(y = "Average return of potfolio different in Size",
-                    title = "The path of average daily returns around earnings report announcement date",
-                    subtitle = glue("from {(Accprd[[y]][q]+days(1))%m+%months(-3)} to {Accprd[[y]][q]}")
+                                 title = title_char,
+                                 subtitle = subtitle_char
                                  ) +
                             theme_bw() +
                             theme(legend.position = "bottom",
@@ -387,12 +421,14 @@ for (y in seq_along(Accprd)) {  # loop in year
             
         
         # compare the average return around announcement date among industries ====
+        title_char <- "Average returns of stocks around announcement date across industries"
+        
         group_by(g.Dret, timeline, "Indus" = str_sub(Indus, 1L, 1L)) %>% 
                 summarise("avgDret" = Dretnd %*% (avgDsmvosd / sum(avgDsmvosd))) %>% 
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, color = Indus)) +
                             labs(y = "Average return",
-                    title = "Average returns of stocks around announcement date across industries"
+                                 title = title_char
                                  ) +
                             scale_color_manual(values = col_vector) +
                             theme_economist() +
@@ -406,9 +442,15 @@ for (y in seq_along(Accprd)) {  # loop in year
 
 }
 
-rm(list = setdiff(ls(), c("Accprd", "model_type"))); gc()
+rm(list = setdiff(ls(), c("Accprd", "model_type", "Pre_type", "Markettype", 
+                          "trddat", "trdday", "ff_factor", "Nrrate"
+                          )
+                  )
+   )
 
-# Part IV, Path of stock returns when earnings report are released --------
+gc()
+
+# Part III, Path of stock returns when earnings report are released -------
 
 # function to add the time line, tau, for every stocks 
 add_tau_stk <- function(df) {
@@ -449,8 +491,7 @@ for (y in seq_along(Accprd)) { # loop in years
             map(~ split(.x, .x$Stkcd) %>% add_tau_stk()
                 ) %>% 
             map_dfr(~ summarise(group_by(.x, tau), 
-                                "avg_Dret" =  Dretnd %*% (Dsmvosd / sum(Dsmvosd)),
-                                .groups = "drop"
+                                "avg_Dret" =  Dretnd %*% (Dsmvosd / sum(Dsmvosd))
                                 ), 
                     .id = "quarter"
                     ) %>% 
@@ -483,18 +524,27 @@ for (y in seq_along(Accprd)) { # loop in years
 }
 
 
-# Part V, Regression P/E on coefficients of factors ----------------------
+# Part IV, Fama–MacBeth regression -----------------------------------------
+# This method estimates the betas and risk premia for any risk factors 
+# that are expected to determine asset prices. 
+# The parameters are estimated in two steps,
+# 1. regress each asset against the proposed risk factors 
+#    to determine that asset's beta for that risk factor.
+# 2. regress all asset returns for a fixed time period 
+#    against the estimated betas to determine the risk premium for each factor.
 
 library(DBI)
 library(RSQLite)
 library(dbplyr)
 library(broom)
+
 # link to database
-QEA_db <- dbConnect(RSQLite::SQLite(), "./QEA_db.sqlite")
+QEA_db <- dbConnect(RSQLite::SQLite(), "~/OneDrive/Data.backup/QEAData/QEA_db.sqlite")
 
 ReptInfo_Acc_EPS <- tbl(QEA_db, "Income_Statement") %>% 
-        select(Stkcd, Accper, B003000000) %>% 
+        filter(Typrep == 'A') %>% 
         filter(Accper %in% !!flatten_dbl(Accprd)) %>% 
+        select(c(Stkcd, Accper, B003000000)) %>% 
         collect() %>% 
         rename("EPS" = B003000000) %>% 
         mutate(Accper = as.Date(Accper, origin = '1970-01-01'))
@@ -512,70 +562,90 @@ stkcd_quarter <- dir(path = file.path('~/OneDrive/Data.backup/QEAData', model_ty
         map(pull, "Stkcd") %>% 
         `names<-`(Accprd)
 
-reg_EP_ff <- vector(mode = 'list', length = length(Accprd)) %>% 
+reg_FM <- vector(mode = 'list', length = length(Accprd)) %>% 
         `names<-`(Accprd) %>% 
         # save the regression data and OLS result
         map(~ vector(mode = "list", length = 2L) %>%  
-                set_names(c("data", "lm_est"))  
+                set_names(c("FM_1st", "FM_2nd"))  
             )
 
 for (i in seq_along(Accprd)) {
-    
-    start_point <- Accprd[i] + days(1) - months(3)
-    
-    trddat_quarter <- trddat %>% 
-            filter(Stkcd %in% stkcd_quarter[[i]]) %>% 
-            mutate(data = map(data, filter, TradingDate %within% interval(start_point, Accprd[i])))
     
     base_date <- Accprd[i] %>% print()
     
     while (!base_date %in% trdday) base_date <- base_date + days(-1)
     
-    ReptInfo_Acc_PE <- trddat_quarter %>% 
-            mutate(data = map(data, filter, TradingDate == base_date)) %>% 
-            unnest(cols = "data") %>% 
-            select(-c(TradingDate, Dretnd, Dsmvosd, Listdt)) %>% 
-            inner_join(filter(ReptInfo_Acc_EPS, Accper == Accprd[i]),
-                       by = "Stkcd"
-                       ) %>% 
-            mutate("EP" = EPS / Clsprc)
+    start_point <- Accprd[i] + days(1) - months(3)
     
-    # merge the trading data with factors and risk-free interests
-    reg_quarter <- trddat_quarter %>% 
-            mutate(data = map(data, ~ inner_join(.x, ff_factor, by = "TradingDate") %>% 
-                                          inner_join(Nrrate, by = "TradingDate") 
-                              )
+    # first filter the stocks and quarter date 
+    # then merge the trading data with factors and risk-free interests
+    trddat_quarter_ts <- trddat %>% 
+            subset(Stkcd %in% stkcd_quarter[[i]],
+                   select = -c(Indus, Listdt)
+                   ) %>% 
+            mutate('data' = map(data, 
+                                ~ filter(.x, 
+                                         TradingDate %within% interval(start_point, base_date) 
+                                         ) %>% 
+                                  inner_join(ff_factor, by = "TradingDate") %>% 
+                                  inner_join(Nrrate, by = "TradingDate") 
+                                )
                    ) %>% 
             `[`(map_lgl(.$data, ~ nrow(.x) >= 30L), )
     
-    # running regression about stock returns on multiple factors 
-    reg_quarter %<>% mutate( 
-            "lm_est" = map(data, ~ lm(formula = formula(model_formula, lhs = 1), data = .x) %>% 
-                                   tidy() %>% 
-                                   select(term, estimate)
-                           )
+    # accounting indicators of stocks at this quarter
+    Acc_quarter <- trddat_quarter_ts %>% 
+            mutate('data' = map(data, filter, TradingDate == base_date)) %>% 
+            unnest(cols = "data") %>% 
+            select(c(Stkcd, Clsprc, Dsmvosd)) %>% 
+            left_join(filter(ReptInfo_Acc_EPS, Accper == Accprd[i]),
+                      by = 'Stkcd'
+                      ) %>% 
+            rename('Size' = Dsmvosd) %>% 
+            mutate('PE' = Clsprc / EPS) %>% 
+            select(-c(Accper, Clsprc))
+    
+    # TS, running regression about stock returns on multiple factors 
+    reg_FM_1st <- trddat_quarter_ts %>% 
+            transmute(Stkcd,
+                      "lm_est" = map(data, 
+                                     ~ lm(formula = formula(model_formula, lhs = 1), data = .x) %>% 
+                                       tidy() %>% 
+                                       select(term, estimate)
+                                     )
             ) %>% 
-            select(Stkcd, lm_est) %>% 
             unnest(cols = "lm_est") %>% 
             spread(key = term, value = estimate) 
     
-    # join the explained variable `EP` with predictors 
-    reg_quarter %<>% 
-            right_join(select(ReptInfo_Acc_PE, Stkcd, EP, EPS), by = "Stkcd")
+    reg_FM[[i]]$FM_1st <- reg_FM_1st
     
-    reg_EP_ff[[i]]$data <- reg_quarter
-            
-    # running regression about EP ratio on estimate coefficients of factors 
-    reg_EP_ff[[i]]$lm_est <- lm(formula = formula(model_formula, lhs = 2), 
-                                data = reg_quarter
-                                ) 
+    # join the explained variable `EP` with predictors 
+    trddat_quarter_cs <- unnest(trddat_quarter_ts, cols = 'data') %>% 
+            select(Stkcd, TradingDate, Dretnd, Nrrdaydt) %>% 
+            group_nest(TradingDate) %>% 
+            mutate('data' = map(data, 
+                                inner_join,
+                                inner_join(reg_FM_1st, Acc_quarter, by = "Stkcd"),
+                                Joining, by = "Stkcd"
+                                )
+                   )
+    
+    # CS, running regression about stock returns on estimated coefficients of factors 
+    reg_FM_2nd <- trddat_quarter_cs %>% 
+            transmute(TradingDate, 
+                      'reg_FM_2nd' = map(data, 
+                                         ~ lm(formula = formula(model_formula, lhs = 1), data = .x) %>% 
+                                           tidy()
+                                         )
+                      ) %>% 
+            unnest(cols = 'reg_FM_2nd') %>% 
+            group_by(term) %>% 
+            summarise_if(.predicate = is.numeric, .funs = mean)
+    
+    reg_FM[[i]]$FM_2nd <- reg_FM_2nd
 
 }
 
-save(reg_EP_ff, 
-     file = glue('~/OneDrive/Data.backup/QEAData/reg_EP_ff_{model_type}.RData')
+save(reg_FM, 
+     file = glue('~/OneDrive/Data.backup/QEAData/reg_FM_{model_type}.RData')
      )
-
-map(reg_EP_ff, "lm_est") %>% 
-        map_dfr(tidy, .id = "quarter") %>% 
-        View()
