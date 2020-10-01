@@ -15,9 +15,13 @@ library(ggthemes)
 summarise <- purrr::partial(summarise, .groups = 'drop')
 
 # function to extract daily trading data of a specific time range ====
-window_extract <- function(df, behind, ahead, type) {
+window_extract <- function(df, 
+                           peirod = Accprd[[y]][q], 
+                           behind, ahead, 
+                           type
+                           ) {
     
-    annodt <- unique(subset(df, Accper == subAccprd, select = Annodt, drop = T))
+    annodt <- unique(subset(df, Accper == peirod, select = Annodt, drop = T))
     
     if(length(annodt) != 1L) {
         print(glue("{unique(df$Stkcd)}, The annoncement date isn't a singe value"))
@@ -120,9 +124,9 @@ Accprd <- months(seq(from = 0, by = 3, length = len_term)) %>%
 # split by year
 Accprd <- split(Accprd, year(Accprd))
 # create export directory
-datdir <- file.path(model_type, names(Accprd))
 # annual
-if (!all(dir.exists(datdir))) mapply(dir.create, datdir)
+if (!all(dir.exists(file.path(model_type, names(Accprd))))
+    ) mapply(dir.create, file.path(model_type, names(Accprd)))
 # quarterly
 for (i in seq_along(Accprd)) {
     
@@ -192,27 +196,31 @@ for (y in seq_along(Accprd)) {  # loop in year
     for (q in seq_along(Accprd[[y]])) {  # loop in quarter
         
         # choose a given quarter
-        subAccprd <- Accprd[[y]][q] %>% print()
-        setwd(file.path('~/OneDrive/Data.backup/QEAData/', datdir[y], subAccprd))
+        print(Accprd[[y]][q])
         
-        subReptInfo <- filter(ReptInfo, Accper == subAccprd) 
-        subPreRept <- filter(PreRept, AccPeriod == subAccprd)
-          
+        setwd(file.path('~/OneDrive/Data.backup/QEAData/', 
+                        model_type, 
+                        names(Accprd)[y],
+                        Accprd[[y]][q])
+              )
+        
         # select the stocks that had published earnings report at currently quarter
-        trdwin <- filter(trddat, Stkcd %in% pull(subReptInfo, Stkcd))
+        trdwin <- filter(trddat, 
+                         Stkcd %in% pull(filter(ReptInfo, Accper == Accprd[[y]][q]), Stkcd)
+                         )
         
         # for saving memory and speed up the tidy process, we only reserve the 
         # trading data in recent two years before and after calendar accounting date
-        trdwin %<>% mutate(data = map(data, 
-                                      filter, 
-                                      TradingDate %within% 
-                                          interval(subAccprd %m+% months(-11L), 
-                                                   subAccprd %m+% months(+13L)
-                                                   )
-                                      )
+        trdwin %<>% mutate('data' = map(data, 
+                                        filter, 
+                                        TradingDate %within% 
+                                            interval(Accprd[[y]][q] %m+% months(-11L), 
+                                                     Accprd[[y]][q] %m+% months(+13L)
+                                                     )
+                                        )
                            ) %>% 
                 unnest(cols = "data") %>% 
-                split(.$Stkcd)
+                split(f = .$Stkcd)
         
         # eliminating the stocks which date trading records is lesser than 2*12*15 
         # note that there is not the before and after at report announcement date
@@ -220,9 +228,14 @@ for (y in seq_along(Accprd)) {  # loop in year
                 compact()
         
         # Merge the trading data, fama-french factors and earnings report
-        trdwin %<>% lapply(inner_join, ff_factor, by = "TradingDate") %>% 
-                lapply(inner_join, Nrrate, by = "TradingDate") %>% 
-                lapply(inner_join, subReptInfo, by = "Stkcd") %>% 
+        trdwin %<>% lapply(inner_join,
+                           inner_join(ff_factor, Nrrate, by = "TradingDate"), 
+                           by = "TradingDate"
+                           ) %>% 
+                lapply(inner_join, 
+                       filter(ReptInfo, Accper == Accprd[[y]][q]), 
+                       by = "Stkcd"
+                       ) %>% 
                 # calculate the column that daily return minus risk free return
                 lapply(mutate, 'Dret_rf' = Dretnd - Nrrdaydt) 
     
@@ -241,7 +254,7 @@ for (y in seq_along(Accprd)) {  # loop in year
         if ( any(`==`(map_dbl(trdwin, nrow), wind_ahead - wind_behind + 1L)) ) {
 
                 trdwin %<>% map(
-                        ~ ifelse("=="(rowSums(is.na( .x )), 0L) %>% any(), 
+                        ~ ifelse("=="(rowSums(is.na(.x)), 0L) %>% any(), 
                                  return(select(.x, Stkcd, TradingDate, Dretnd, Dsmvosd, 
                                                Dret_rf, all_of(ff_term), Nrrdaydt,
                                                Accper, Annodt, Annowk, 
@@ -269,19 +282,39 @@ for (y in seq_along(Accprd)) {  # loop in year
         # stocks whether had published ex-report or not ====
         if (Pre_type %in% c(0L, 1L)) {
             
-                trdwin %<>% `[`(pull(filter(subPreRept, Source == Pre_type), Stkcd))
+                trdwin %<>% `[`(pull(filter(PreRept, 
+                                            AccPeriod == Accprd[[y]][q],
+                                            Source == Pre_type
+                                            ),
+                                     Stkcd
+                                     )
+                                )
                 
         } else if (Pre_type == 2L) {
     
-                trdwin %<>% `[`(pull(filter(subPreRept, Source %in% c(0, 1)), Stkcd))
+                trdwin %<>% `[`(pull(filter(PreRept, 
+                                            AccPeriod == Accprd[[y]][q],
+                                            Source %in% c(0, 1)
+                                            ), 
+                                     Stkcd
+                                     )
+                                )
                 
         } else if (Pre_type == 3L) {
             
-                trdwin %<>% `[`(!names(.) %in% pull(subPreRept, Source))
+                trdwin %<>% `[`(!names(.) %in% pull(filter(PreRept, 
+                                                           AccPeriod == Accprd[[y]][q]
+                                                           ), 
+                                                    Stkcd
+                                                    )
+                                )
             
         } else if (Pre_type == 4L) {
      
-                trdwin %<>% `[`(!(names(.) %in% pull(filter(subPreRept, Source == "0"), 
+                trdwin %<>% `[`(!(names(.) %in% pull(filter(PreRept, 
+                                                            AccPeriod == Accprd[[y]][q],
+                                                            Source == "0"
+                                                            ), 
                                                      Stkcd
                                                      )
                                   )
@@ -289,7 +322,10 @@ for (y in seq_along(Accprd)) {  # loop in year
                 
         } else if (Pre_type == 5L) {
             
-                trdwin %<>% `[`(!(names(.) %in% pull(filter(subPreRept, Source == "1"), 
+                trdwin %<>% `[`(!(names(.) %in% pull(filter(PreRept, 
+                                                            AccPeriod == Accprd[[y]][q],
+                                                            Source == "1"
+                                                            ), 
                                                      Stkcd
                                                      )
                                   )
@@ -307,7 +343,7 @@ for (y in seq_along(Accprd)) {  # loop in year
         stkcd <- names(trdwin)
         
         # export the symbols of stocks as a csv file
-        glue("{subAccprd}_{Pre_type}_{Markettype}_stkcd.csv") %>%
+        glue("{Accprd[[y]][q]}_{Pre_type}_{Markettype}_stkcd.csv") %>%
                 write.csv(list("Stkcd" = stkcd), file = ., quote = FALSE, row.names = F)
         
         ## construct the estimate and event window =====
@@ -323,7 +359,7 @@ for (y in seq_along(Accprd)) {  # loop in year
         
         if ( any(map_dbl(trdest, nrow) == wind_est_len) ) {
             
-                glue("{subAccprd}_{Pre_type}_{Markettype}_{model_type}_stkest.csv") %>%
+                glue("{Accprd[[y]][q]}_{Pre_type}_{Markettype}_{model_type}_stkest.csv") %>%
                         write_csv(bind_rows(trdest), path = .)
               
                 # saving the stock symbols and date sequence index as a csv file,
@@ -331,7 +367,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                 tibble("Stkcd" = rep(1:length(stkcd), each = wind_est_len),
                        "day" = rep(1:wind_est_len, times = length(stkcd))
                        ) %>% 
-                write_csv(path = paste(subAccprd, Pre_type, Markettype, 
+                write_csv(path = paste(Accprd[[y]][q], Pre_type, Markettype, 
                                        "index_MATLAB.csv",
                                        sep = "_"
                                        )
@@ -350,7 +386,7 @@ for (y in seq_along(Accprd)) {  # loop in year
         
         if ( any(map_dbl(trdeve, nrow) == wind_eve_len) ) {
             
-                glue("{subAccprd}_{Pre_type}_{Markettype}_{model_type}_stkeve.csv") %>%
+                glue("{Accprd[[y]][q]}_{Pre_type}_{Markettype}_{model_type}_stkeve.csv") %>%
                         write_csv(bind_rows(trdeve), path = .)
             
         } else stop(glue("{Accprd[[y]][q]}, errors existed in the event-window!"))
@@ -387,7 +423,8 @@ for (y in seq_along(Accprd)) {  # loop in year
         subtitle_char <- glue("from {(Accprd[[y]][q]+days(1))%m+%months(-3)} to {Accprd[[y]][q]}")
         
         # average daily returns grouped by Market type and time line
-        figure_Dret <- group_by(g.Dret, timeline, g.Size) %>% 
+        figure_Dret <- g.Dret %>% 
+                group_by(timeline, g.Size) %>% 
                 summarise("avgDret" = Dretnd %*% (avgDsmvosd / sum(avgDsmvosd))) %>% 
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, colour = g.Size)) +
@@ -400,7 +437,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                                   legend.title = element_blank()
                                   )
         
-        figure_Dret_Market <- group_by(g.Dret, timeline, Markettype, g.Size) %>% 
+        figure_Dret_Market <- g.Dret %>% 
+                group_by(timeline, Markettype, g.Size) %>% 
                 summarise("avgDret" = Dretnd %*% (avgDsmvosd / sum(avgDsmvosd))) %>% 
                     ggplot() +
                         geom_path(aes(x = timeline, y = avgDret, colour = g.Size)) +
@@ -640,7 +678,9 @@ for (i in seq_along(Accprd)) {
                       ) %>% 
             unnest(cols = 'reg_FM_2nd') %>% 
             group_by(term) %>% 
-            summarise_if(.predicate = is.numeric, .funs = mean)
+            summarise_if(.predicate = is.numeric, .funs = mean) %>% 
+            mutate(term = factor(term, levels = c('(Intercept)' ,ff_term))) %>% 
+            arrange(term)
     
     reg_FM[[i]]$FM_2nd <- reg_FM_2nd
 
