@@ -1,6 +1,5 @@
 # This script is mainly written for calculate the abnormal returns 
 # and visualizing some key features about firms attribute and accounting indicator 
-
 library(tidyverse)
 library(magrittr)
 library(lubridate)
@@ -10,27 +9,26 @@ library(modelr)
 library(glue)
 library(broom)
 
+library(ggthemes)
+library(hrbrthemes)
 library(multipanelfigure)
 library(RColorBrewer)
+library(ggnewscale)
 # display.brewer.all()
-library(ggthemes)
+extrafont::loadfonts()
 
 # Part I, import data and assign parameter -------------------------------
-
 setwd('~/OneDrive/Data.backup/QEAData')
 # Import the listing date, industry, and paying attention resource of stocks
 load(file = "./FirmAttr.RData")
 # Import the status data of quarterly financial report 
 load(file = "./ReportInfo.RData"); rm(PreRept)
-
-# assign basic parameters about quarter and sample attributes ====
-# quarter sequence
-Accprd_seq <- months(seq(from = 0, by = 3, length = 1)) %>% 
-        mapply('%m+%', ymd('2017-09-30'), .) %>% 
+# assign basic parameters about quarter and sample attributes
+Accprd <- months(seq(from = 0, by = 3, length = 1)) %>% 
+        mapply('%m+%', ymd('2017-03-31'), .) %>% 
         base::as.Date(origin = '1970-01-01') %>% 
         # split by year
-        split(., f = year(.))
-
+        split(f = year(.))
 # the type of stocks that weather had publish pre-report
 Pretype <- 6L  
 # the market types that the stocks in our sample
@@ -41,11 +39,11 @@ model_type <- "CH4"
 # if not, represent that we will regress traditional Fama-French multi-factor model
 value_base <- "EPS"
 # if we just want to analysis a sub-sample?
+# if the value of `subsam` is a number, for example, subsam <- 300L
+# the analysis results of below script will just based on a sub-sample
 subsam <- FALSE
-## if the value of `subsam` is a number, for example, subsam <- 300L
-## the analysis results of below script will just based on a sub-sample
 
-
+# Part II, calculate the grouped abnormal returns (AR) and cumulative AR ----
 # Asset pricing model, CAPM, CH3 or FF5? 
 if (model_type == "CAPM") {
     
@@ -70,7 +68,7 @@ if (model_type == "CAPM") {
 } else if (model_type == "CH3") {
         
         if (value_base %in% c("EPS", "CFPS")) {    
-    
+        
                 ff_term <- c("mkt_rf", "SMB", "VMG")
                 model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + VMG)
         
@@ -79,40 +77,35 @@ if (model_type == "CAPM") {
 } else if (model_type == "CH4") {
         
         if (value_base %in% c("EPS", "CFPS")) {
-            
+                
                 ff_term <- c("mkt_rf", "SMB", "VMG", "RMW")
                 model_formula <- Formula(Dret_rf ~ mkt_rf + SMB + VMG + RMW)
                 
-        } else stop("Please input the class information of value.")
+        } else stop("Please input the class information of value factor.")
 
-}           
-
-# Part II, calculate the grouped abnormal returns (AR) and cumulative AR ----
-
+}
 # create a complicate list to save quarterly classification results from PLS
-PLS_grp <- vector(mode = "list", length = length(Accprd_seq)) %>% 
-        set_names(names(Accprd_seq)) %>%  # year
+PLS_grp <- vector(mode = "list", length = length(Accprd)) %>% 
+        set_names(names(Accprd)) %>%  # year
         map(~ vector(mode = "list", length = 4L) %>%  
                 set_names(c("1st", "2nd", "3rd", "4th"))  # quarter 
             ) %>%  
         map(map, ~ vector(mode = "list", length = 2L) %>% 
-                set_names(c("cluster", "estimator"))  # quarter 
+                set_names(c("cluster", "estimator"))  # saving cluster and estimator
             )
 
-for (y in seq_along(Accprd_seq)) {  # loop in year
+for (y in seq_along(Accprd)) {  # loop in year
     
-    for (q in seq_along(Accprd_seq[[y]])) {  # loop in quarter
+    for (q in seq_along(Accprd[[y]])) {  # loop in quarter
     
-        Accprd <- Accprd_seq[[y]][q] %>% print()
-       
         # Read the result from MATLAB, PLS (su, 2016) --------------------
-        
+        print(Accprd[[y]][q])
         # Group information ====
         PLSclus <- dir(path = file.path('~/OneDrive/Data.backup/QEAData',
                                         'Matlab_PLS', 
-                                        year(Accprd)
+                                        names(Accprd)[y]
                                         ),
-                       pattern = paste("group", Accprd, Pretype, Markettype, 
+                       pattern = paste("group", Accprd[[y]][q], Pretype, Markettype, 
                                        model_type, 
                                        sep = '_'
                                        ),
@@ -128,16 +121,14 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         grp_num <- levels(PLSclus$g_PLS) %>% length()
         # re-level the order of group levels, this process is important
         PLSclus$g_PLS %<>% fct_relevel(as.character(1:grp_num))
-        
         # save the quarterly cluster result (PLS)
         PLS_grp[[y]][[q]]$cluster <- PLSclus
-        
         # PLS coefficients ====
         PLScoef <- dir(path = file.path('~/OneDrive/Data.backup/QEAData',
                                         'Matlab_PLS', 
-                                        year(Accprd)
+                                        names(Accprd)[y]
                                         ),
-                       pattern = paste("PLS", Accprd, Pretype, Markettype, 
+                       pattern = paste("PLS", Accprd[[y]][q], Pretype, Markettype, 
                                        model_type, 
                                        sep = '_'
                                        ),
@@ -148,23 +139,24 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         # rename the columns name
         for (i in 1:grp_num) {
                 names(PLScoef)[seq(1:3) + 3*(i-1)] <- 
-                        paste0(c('coef', 'sd', 't'), '_', 'g', i)
+                       paste0(c('coef', 'sd', 't'), '_g', i)
+                       
         }
-        
         # add the factor identity column
         PLScoef %<>% add_column("term" = ff_term, .before = 1)
         # save the PLS estimators
         PLS_grp[[y]][[q]]$estimator <- PLScoef
         
         # import the quarterly window trading data ------------------------
-        
         # reset the working directory
         setwd(file.path('~/OneDrive/Data.backup/QEAData', 
-                        model_type, year(Accprd), Accprd
+                        model_type, 
+                        names(Accprd)[y], 
+                        Accprd[[y]][q]
                         )
               )
         # import data of estimate window
-        stkest <- dir(pattern = paste(Accprd, Pretype, Markettype, model_type, 
+        stkest <- dir(pattern = paste(Accprd[[y]][q], Pretype, Markettype, model_type, 
                                       "stkest", 
                                       sep = '_'
                                       ),
@@ -178,10 +170,9 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                                  Annowk = col_factor()  # the day of week
                                  )
                          ) %>% 
-                split(.$Stkcd)
-        
+                split(f = .$Stkcd)
         # import data of event window
-        stkeve <- dir(pattern = paste(Accprd, Pretype, Markettype, model_type, 
+        stkeve <- dir(pattern = paste(Accprd[[y]][q], Pretype, Markettype, model_type, 
                                       "stkeve", 
                                       sep = '_'
                                       ),
@@ -195,8 +186,8 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                                  Annowk = col_factor()  # the day of week
                                  )
                          ) %>% 
-                split(.$Stkcd)
-        
+                split(f = .$Stkcd)
+        # reshape the sample and assign its attributes ====
         # the sample size
         if (is.numeric(subsam)) { # take a subset sample
             
@@ -229,13 +220,9 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         
         # pls_out <- PLS.cvxr(N, winlen, Ret, CH3, K = K_num, lambda = lambda)
         
-        
-        # visual the group external relationship --------------------------
-        figure_term <- paste(Accprd, Pretype, Markettype, model_type, sep = '_')
-        
-        # link the PLS cluster result with stocks feature and 
-        # accounting indicators from quarterly earnings report 
-        
+        # link and visual PLS cluster result with stocks feature ----------
+        # and accounting indicators from quarterly earnings report 
+        figure_term <- paste(Accprd[[y]][q], Pretype, Markettype, model_type, sep = '_')
         # rename the group identity using in plot (legend guide)
         if (grp_num == 2) {
                 grp_name <- c("group one", "group two")
@@ -244,21 +231,23 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         } else if (grp_num == 4) {
                 grp_name <- c("group one", "group two", "group three", "group four")
         } else stop("The group number is not included in script!")
-        
-        PLSclus$g_PLS %<>% factor(levels = 1:grp_num, labels = grp_name) 
+        # relabel the group name
         # 1 = group one, 2 = group two, 3 = group three...
-        
+        PLSclus$g_PLS %<>% factor(levels = 1:grp_num, labels = grp_name) 
         
         # history 
-        left_join(PLSclus, AF_Co, by = "Stkcd") %>% 
-                ggplot(aes(x = g_PLS, y = year(Listdt), group = g_PLS)) +
-                    geom_violin(scale = "area") +
-                        labs(y = "listed year", 
-                             title = "The distribution of listed year of grouped stocks"
-                             ) +
-                        theme_bw() + 
-                        theme(axis.title.x = element_blank())
-            
+        ggplot(data = left_join(PLSclus, AF_Co, by = "Stkcd")) +
+            geom_violin(mapping = aes(x = g_PLS, y = year(Listdt), fill = g_PLS)) +
+                labs(title = "The distribution of listed year of grouped stocks",
+                     y = "listed year"
+                     ) + 
+                theme_ipsum() +
+                scale_fill_brewer(palette = "Set1") + 
+                theme(legend.position = 'none',
+                      axis.title.x = element_blank(),
+                      axis.title.y = element_text(margin = margin(r = 10))
+                      ) 
+        
         ggsave(filename = paste(figure_term, "history.pdf", sep = '_'), 
                width = 8, height = 6, 
                scale = 1
@@ -266,243 +255,240 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         
         # industry 
         left_join(PLSclus, AF_Co, by = "Stkcd") %>% 
-                mutate("Indus" = str_sub(Indus, 1L, 1L)) %>% 
-                count(Indus, g_PLS) %>% 
-                        ggplot(aes(x = Indus, y = n, group = g_PLS, fill = g_PLS)) +
-                            geom_col(position = "stack") +
-                                labs(x = "Industry", y = "Count",
-                                     title = "The count of the number of stocks in a industry"
-                                     ) +
-                                scale_color_brewer(palette = "Set1") + 
-                                coord_flip() + 
-                                theme_economist() + 
-                                theme(legend.title = element_blank(),
-                                      axis.title.y = element_text(margin = margin(r = 10))
-                                      ) 
+        mutate("Indus" = factor(str_sub(Indus, 1L, 1L))) %>% 
+        count(Indus, g_PLS) %>% 
+        group_by(g_PLS) %>% 
+        mutate('freq' = n / sum(n)) %>% 
+        filter(freq >= 0.03) %>% 
+            ggplot(mapping = aes(x = factor(-freq), y = freq, fill = Indus)) + 
+                geom_col(position = 'dodge') +
+                labs(title = "The distribuion frequency of stocks in a industry",
+                     y = "frequency",
+                     x = 'Industry',
+                     fill = 'Industry'
+                     ) + 
+                facet_wrap(~ g_PLS, ncol = 2, scales = 'free_x', drop = TRUE) + 
+                scale_fill_brewer(palette = 'Set1') +
+                theme_ipsum() + 
+                theme(axis.text.x = element_blank())
         
         ggsave(filename = paste(figure_term, "Industry.pdf", sep = '_'),
                width = 8, height = 6, 
                scale = 1.2
                )
         
+        # the information from AF_Cfeature ====
+        # just need to select annual data of this year
+        g_accfea <- AF_Cfeature %>% 
+                filter(year(Accper) == year(Accprd[[y]][q])) %>% 
+                left_join(PLSclus, ., by = "Stkcd") %>% 
+                # remove stocks that Analysis Attention or Report Attention is NA
+                na.omit() 
         
-        # the information from ReptInfo 
+        # The relationship between the number of research reports or analysis teams
+        # paying attention to a stock and the company opacity category
+        f_opacity <- g_accfea %>% 
+                gather(key = 'AttentionType', value = 'Attention',
+                       AnaAttention, ReportAttention
+                       ) %>% 
+                mutate(AttentionType = factor(AttentionType,
+                                              levels = c("AnaAttention", "ReportAttention"),
+                                              labels = c("Analysis team", "Disclosure report")
+                                              )
+                       ) %>% 
+                group_by(CompanyOpacity, AttentionType) %>% 
+                summarise("avgAttention" = mean(Attention, na.rm = TRUE),
+                          .groups = "drop"
+                          ) %>% 
+                    ggplot(aes(x = CompanyOpacity, y = avgAttention, fill = CompanyOpacity)) +
+                        geom_col(position = "dodge" ) +
+                        labs(x = "The category of company opacity", 
+                             y = "Count (average)",
+                             fill = "Company Opacity"
+                             ) + 
+                        facet_wrap(vars(AttentionType), nrow = 2, scales = "free_y") + 
+                        scale_fill_brewer(palette = "Greys") +
+                        theme_ipsum()
+        
+        # the internal distribution of different opacity levels firms in each group
+        f_group_opacity <- g_accfea %>% 
+                count(g_PLS, CompanyOpacity) %>%
+                group_by(g_PLS) %>% 
+                mutate('freq' = n / sum(n)) %>% 
+                    ggplot(aes(x = CompanyOpacity, y = freq)) +
+                        geom_col(aes(fill = g_PLS), position = "dodge") +
+                            labs(y = "frequency",
+                                 x = "The category of company opacity",
+                                 fill = "group (PLS)"
+                                 ) +
+                            scale_fill_brewer(palette = "Set1") +
+                            theme_ipsum() +
+                            theme(axis.title.x = element_blank())
+        
+        # company size and company opacity
+        title_char <- "The relationship between company size (logrithm) and company opacity"
+        f_size_opacity <- g_accfea %>% 
+                select(Stkcd, g_PLS, CompanySize, CompanyOpacity) %>% 
+                ggplot(aes(x = g_PLS, y = log(CompanySize))) +
+                geom_violin(aes(fill = CompanyOpacity), width = 1.0) + 
+                    scale_fill_brewer(palette = "Greys") + 
+                new_scale_fill() + 
+                geom_boxplot(aes(fill = g_PLS), width = 0.1) + 
+                    scale_fill_brewer(palette = "Set1") + 
+                labs(title = title_char,
+                     y = "The logarithm of company size"
+                     ) + 
+                theme_ipsum() + 
+                facet_wrap(vars(CompanyOpacity), nrow = 2) + 
+                theme(legend.position = 'none',
+                      axis.title.x = element_blank()
+                      )
+        
+        multi_panel_figure(width = 320, height = 320, columns = 2, rows = 3) %>%
+        fill_panel(f_opacity, column = 1, row = 1) %>%
+        fill_panel(f_group_opacity, column = 2, row = 1) %>% 
+        fill_panel(f_size_opacity, column = 1:2, row = 2:3) %>% 
+                save_multi_panel_figure(paste(figure_term, "Opacity.pdf", sep = '_'))
+        
+                
+        # size, annual
+        f_acc_size <- g_accfea %>% 
+                ggplot(mapping = aes(x = g_PLS, y = log(CompanySize))) +
+                geom_boxplot(aes(fill = g_PLS), width = 0.1) + 
+                geom_violin(alpha = 0.1) +
+                    labs(y = "Annual firm size taked logrithm") +
+                    scale_fill_brewer(palette = "Set1") +
+                    theme_ipsum() +
+                    theme(axis.title.x = element_blank(),
+                          legend.position = "none"
+                          )
+        
+        # the information from ReptInfo ====
         # EPS, quarterly 
-        f_acc_eps <- left_join(PLSclus, filter(ReptInfo, Accper == Accprd), by = "Stkcd") %>% 
-                ggplot(aes(x = g_PLS, y = Erana, fill = g_PLS)) +
-                    geom_violin() + ylim(-1, 3) +
-                        labs(title = glue("Earnings per share (current quarter)")) +
-                        scale_fill_brewer(palette = "Set1") +
-                        theme_bw() +
-                        theme(plot.title = element_text(size = 12),
-                              axis.title = element_blank(),
-                              legend.position = "none"
-                              )
+        f_acc_eps <- filter(ReptInfo, Accper == Accprd[[y]][q]) %>% 
+                left_join(PLSclus, ., by = "Stkcd") %>% 
+                ggplot(aes(x = g_PLS, y = Erana)) + 
+                geom_boxplot(aes(fill = g_PLS), width = 0.1) + 
+                geom_violin(width = 1.0, alpha = 0.1) + 
+                    ylim(-0.5, 1) + 
+                    labs(y = glue("Earnings per share at current quarter")) +
+                    scale_fill_brewer(palette = "Set1") +
+                    theme_ipsum() +
+                    theme(axis.title.x = element_blank(),
+                          legend.position = "none"
+                          )
         
         # the day of week that the report was announced
-        left_join(PLSclus, filter(ReptInfo, Accper == Accprd), by = "Stkcd") %>%
-                count(g_PLS, Annowk) %>% 
-                mutate("Annowk" = factor(Annowk, 
-                                         levels = c("0","1","2", "3", "4", "5", "6"), 
-                                         labels = c("Sun","Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-                                         )
-                       ) %>%
-                ggplot(aes(x = g_PLS, y = n, group = Annowk)) +
-                    geom_col(aes(fill = Annowk),
-                             position = "dodge"
-                             ) +
-                        labs(y = "Count", 
-                             title = "The weekday of quarterly earning reports announcemented",
-                             fill = "Weekday"
-                             ) + 
-                        scale_fill_brewer(palette = "Greys") +
-                        theme_dark() +
-                        theme(axis.title.x = element_blank(),
-                              axis.title.y = element_text(margin = margin(r = 10))
-                              ) 
+        filter(ReptInfo, Accper == Accprd[[y]][q]) %>% 
+        left_join(PLSclus, ., by = "Stkcd") %>%
+        count(g_PLS, Annowk) %>% 
+        group_by(g_PLS) %>% 
+        mutate('freq' = n / sum(n),
+               'Annowk' = factor(Annowk, 
+                                 levels = c("0", "1", "2", "3", "4", "5", "6"), 
+                                 labels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+                                 )
+               ) %>%
+            ggplot(aes(x = factor(freq), y = freq, fill = fct_infreq(Annowk))) +
+                geom_col(position = "dodge") + 
+                    labs(title = "The weekday of quarterly earning reports announcemented",
+                         y = "frequency", 
+                         x = "Weekday",
+                         fill = "Weekday"
+                         ) + 
+                    facet_wrap(~g_PLS, ncol = 2, scales = 'free_x', drop = TRUE) + 
+                    scale_fill_brewer(palette = "Blues") +
+                    theme_ipsum() +
+                    theme(axis.text.x = element_blank()) 
         
         ggsave(filename = paste(figure_term, "Weekday.pdf", sep = '_'),
                width = 8, height = 6, 
                scale = 1
                )
         
-        
-        # the information from AF_Cfeature
-        # just need to select annual data of this year
-        g_accfea <- filter(AF_Cfeature, year(Accper) == year(Accprd)) %>% 
-                left_join(PLSclus, ., by = "Stkcd") 
-        # size, annual
-        f_acc_size <- ggplot(g_accfea, aes(x = g_PLS, y = log(CompanySize))) +
-                geom_violin(aes(fill = g_PLS)) +
-                    labs(title = glue("Firm size (log) at annual {year(Accprd)}")) +
-                    scale_fill_brewer(palette = "Set1") +
-                    theme_bw() +
-                    theme(plot.title = element_text(size = 12),
-                          axis.title = element_blank(),
-                          legend.position = "none"
-                          )
-        
-        # company size and company opacity
-        select(g_accfea, Stkcd, g_PLS, CompanySize, CompanyOpacity) %>% 
-                na.omit() %>% # remove NA in opacity category
-                ggplot(aes(x = CompanyOpacity, y = log(CompanySize))) +
-                    geom_boxplot(aes(color = CompanyOpacity)) + 
-                        labs(y = "The logarithm of company size",
-                             title = "The relationship of the company size (log) and company opacity"
-                             ) +
-                        facet_grid( ~ g_PLS) +
-                        theme_bw() +
-                        scale_color_brewer(palette = "Set1") +
-                        theme(axis.title.x = element_blank(),
-                              legend.position = "none")
-        
-        ggsave(filename = paste(figure_term, "Attention.pdf", sep = '_'),
-               width = 8, height = 6, 
-               scale = 1
-               )
-        
-        # the internal distrubution of different opacity levels firms in each group
-        count(g_accfea, g_PLS, CompanyOpacity) %>% na.omit() %>%
-                ggplot(aes(x = g_PLS, y = n)) +
-                    geom_col(aes(fill = CompanyOpacity), position = "dodge") +
-                        labs(y = "Count", fill = "Company Opacity",
-                             title = "Companies that with different levels of opacity within each group"
-                             ) +
-                        scale_fill_brewer(palette = "Greys") +
-                        theme_dark() +
-                        theme(axis.title.x = element_blank(),
-                              axis.title.y = element_text(margin = margin(r = 10)),
-                              legend.position = "top"
-                              )
-        
-        ggsave(filename = paste(figure_term, "Opacity.pdf", sep = '_'), 
-               width = 8, height = 6,
-               scale = 1
-               )
-        
-        g_accfea %<>% gather(c(AnaAttention, ReportAttention),
-                             key = 'AttentionType', value = 'Attention'
-                             ) %>% 
-                arrange(Stkcd)
-        
-        g_accfea$AttentionType %<>% factor(levels = c("AnaAttention", "ReportAttention"),
-                                           labels = c("Analysis team", "Disclosure report")
-                                           )
-        
-        title_char <- paste("The relationship of the number of research reports or", 
-                            "analysis teams paying attention to a stock",
-                            "\nand the company opacity category disclosured by Chinese stock exchange",
-                            sep = " "
-                            )
-        
-        group_by(g_accfea, CompanyOpacity, AttentionType) %>% 
-                summarise("avgAttention" = mean(Attention, na.rm = TRUE),
-                          .groups = "drop"
-                          )%>% 
-                na.omit() %>%  # remove NA in opacity category
-                    ggplot(aes(x = AttentionType, y = avgAttention, group = CompanyOpacity)) +
-                        geom_col(aes(fill = CompanyOpacity),
-                                 position = "dodge"
-                                 ) +
-                        labs(title = title_char,
-                             x = "The category of company opacity", 
-                             y = "Count (average)"
-                             ) +
-                        scale_fill_brewer(palette = "Greys") +
-                        theme_dark() +
-                        theme(legend.title = element_blank(),
-                              legend.position = "top",
-                              axis.title.y = element_text(margin =  margin(r = "10")),
-                              axis.title.x = element_text(margin =  margin(t = "10")),
-                              plot.title = element_text(size = 12),
-                              )
-        
-        ggsave(filename = paste(figure_term, "Opacity-cor.pdf", sep = '_'),
-               width = 8, height = 6, 
-               scale = 1
-               )
-        
-        
         # Calculate AR and CAR within event window -----------------------
         
-        # the correlation coefficient between explanation variables ====
-        stkest_ff <- tibble('Stkcd' = names(stkest),
-                            'data' = map(stkest, select, c("Dret_rf", all_of(ff_term)))
-                            ) %>% 
-                mutate("cor_var" = map(data, ~ cor( select(.x, - c("Dret_rf")) ))) 
-
         # Obtain the OLS estimate parameters =====
-        # function `tidy` return estimate, std.error, statistic, p.value 
-        stkest_ff %<>% mutate("lm" = map(data, ~ lm(data = .x,
-                                                    formula = formula(model_formula, lhs = 1) 
-                                                    ) %>% 
-                                                 tidy()
-                                         )
-                              )
-        OLScoef <- select(stkest_ff, Stkcd, lm) %>% unnest(cols = "lm")
+        lm_stk_tidy <- stkest %>% 
+                tibble('Stkcd' = names(.),
+                       'data' = map(., select, c("Dret_rf", all_of(ff_term)))
+                       ) %>% 
+                # the value of estimate, std.error, statistic, p.value from `lm`
+                transmute(Stkcd,
+                          "lm" = map(data, 
+                                     ~ lm(data = .x,
+                                          formula = formula(model_formula, lhs = 1) 
+                                          ) %>% 
+                                         tidy()
+                                     )
+                          ) %>% 
+                unnest(cols = "lm")
+                
         # save the OLS estimate, compared with MATLAB's
-        write.csv(OLScoef, 
-                  file = paste(Accprd, Pretype, Markettype, model_type, 
+        write.csv(lm_stk_tidy, 
+                  file = paste(Accprd[[y]][q], Pretype, Markettype, model_type, 
                                'OLScoef.csv', 
                                sep = '_'
-                               ),
+                               ), 
                   quote = F, row.names = F
                   )
         
         # gather the data in panel form to plot the distribution of estimators
-        QEA_ggOLS <- gather(OLScoef, estimate:p.value, 
-                            key = 'Statistics', value = 'Parameter'
-                            ) %>% 
-                # term obtain the explanation variables and intercept in our model
-                arrange(Stkcd, term) %>% 
+        lm_gstk_tidy <- gather(lm_stk_tidy, 
+                               key = 'Statistics', value = 'Parameter',
+                               estimate:p.value
+                               ) %>% 
                 # add the cluster result of PLS
                 full_join(PLSclus, ., by = "Stkcd")
         
-        # the distribution of values of intercept
-        filter(QEA_ggOLS, term == "(Intercept)" & Statistics == "estimate") %>% 
-            ggplot(aes(x = Parameter, fill = g_PLS)) +
-                geom_area(stat = "bin", bins = 30) +
-                labs(x = "Estimated intercept",
-                     title = paste("The distribution of estimate intercepts",
-                                   model_type, Accprd, sep = ", "
-                                   )
-                     ) +
-                theme_economist() +
-                theme(legend.title = element_blank(),
-                      axis.title.y = element_blank(),
-                      axis.title.x = element_text(margin = margin(t = 7))
-                      )
+        # the distribution of values of intercept 
+        title_char <- glue("The distribution of estimate intercepts, {model_type}")
+        caption_char <- glue("{Accprd[[y]][q]+days(1) + months(-3)} ~ {Accprd[[y]][q]}")
+        # term obtain the explanation variables and intercept in our model
+        f_intercept <- lm_gstk_tidy %>% 
+                filter(term == "(Intercept)", 
+                       Statistics == "estimate"
+                       ) %>% 
+                ggplot(aes(x = Parameter, y = ..scaled.., fill = g_PLS)) +
+                    geom_density(alpha = 0.6) + 
+                    labs(title = title_char,
+                         y = "Density",
+                         x = "Estimated intercept",
+                         caption = caption_char
+                         ) +
+                    scale_fill_brewer(palette = 'Set1') + 
+                    theme_ipsum() +
+                    theme(legend.title = element_blank(),
+                          legend.position = 'none'
+                          )
         
-        ggsave(filename = paste(figure_term, "Intercept.pdf", sep = '_'),
-               width = 8, height = 6, 
-               scale = 1
-               )
-        
-        # the distribution of coefficients of explanation variables 
-        f_coef <- filter(QEA_ggOLS, term != "(Intercept)" & Statistics == "estimate") %>% 
-            ggplot(aes(x = Parameter, fill = g_PLS)) +
-                geom_area(stat = "bin", bins = 60) + 
-                scale_fill_brewer(palette = "Set1") +
-                facet_grid(term ~ .) +
-                labs(y = "Count", 
-                     title = paste("The distribution of factors estimators",
-                                   model_type, Accprd, sep = ", "
-                                   )
-                     ) +
-                theme_bw() +
-                theme(axis.title.x = element_blank(),
-                      axis.title.y = element_text(margin = margin(r = 10)),
-                      plot.title = element_text(size = 12),
-                      legend.position = "none"
-                      )
-        
+        # the distribution of coefficients of explanation variables
+        title_char <- glue("The distribution of factors estimators, {model_type}")
+        f_coef <- lm_gstk_tidy %>% 
+                filter(term != "(Intercept)", 
+                       Statistics == "estimate"
+                       ) %>% 
+                ggplot(aes(x = Parameter, y=..scaled.., fill = g_PLS)) +
+                    geom_density(alpha = 0.6) + 
+                    scale_fill_brewer(palette = "Set1") +
+                    facet_wrap(vars(term), nrow = length(ff_term)) +
+                    labs(title = title_char,
+                         y = "Density", 
+                         x = "the value of estimated coefficient",
+                         caption = caption_char
+                         ) +
+                    theme_bw() +
+                    theme(legend.position = "none",
+                          axis.text.y = element_blank(),
+                          axis.ticks.y = element_blank()
+                          )
         
         # calculate AR ====
-        OLScoef %<>% split(.$Stkcd) 
+        lm_stk_tidy %<>% split(.$Stkcd) 
         
-        if (any(names(OLScoef) == names(stkeve))) {
+        if (any(names(lm_stk_tidy) == names(stkeve))) {
           
-            QEA_AR <- map2(stkeve, OLScoef, function(x, y) {
+            QEA_AR <- map2(stkeve, lm_stk_tidy, function(x, y) {
                 
                 Dret_pred <- `%*%`(as.matrix(select(x, all_of(ff_term))), 
                                    diag(subset(y, term %in% ff_term, select = "estimate", drop = TRUE))
@@ -517,26 +503,28 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                 } 
             )
             
-        } else print("Please correct the order of the stocks in the file `OLScoef` and `stkeve`.")
+        } else print("Please correct the order of the stocks in the file `lm_stk_tidy` and `stkeve`.")
         
         # we reshape the value of abnormal returns in panel form with group identity
-        mutate(PLSclus, g_PLS = factor(g_PLS, 
-                                       levels = grp_name, 
-                                       labels = as.character(1:grp_num)
-                                       )
-               ) %>% 
-                right_join(bind_rows(QEA_AR), by = "Stkcd") %>% 
-                # export as csv file
-                write.csv(quote = F, row.names = F,
-                          file = paste(Accprd, Pretype, Markettype, model_type, 
-                                       'gAR.csv', 
-                                       sep = '_'
-                                       )
-                          )
+        bind_rows(QEA_AR) %>% 
+        left_join(mutate(PLSclus, 
+                         'g_PLS' = factor(g_PLS, 
+                                          levels = grp_name, 
+                                          labels = as.character(1:grp_num)
+                                          )
+                         ), 
+                  by = "Stkcd"
+                  ) %>% 
+        # export as csv file
+        write.csv(quote = F, row.names = F,
+                  file = paste(Accprd[[y]][q], Pretype, Markettype, model_type, 
+                               'gAR.csv', 
+                               sep = '_'
+                               )
+                  )
                 
         # the second, layout in columns (tau)  and use it to calculate the mean of AR_tau
-        QEA_gAR <- map(QEA_AR, "AbRet") %>% 
-                bind_cols() %>% 
+        QEA_gAR <- map_df(QEA_AR, "AbRet") %>% 
                 t() %>% 
                 as.data.frame() %>% 
                 set_names(timeline) %>% 
@@ -560,8 +548,9 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         
         
         # plot the path of CAR  =====
-        QEA_ggCAR <- gather(QEA_gCAR, as.character(timeline), 
-                            key = 'Timeline', value = 'CAR'
+        QEA_ggCAR <- gather(QEA_gCAR,  
+                            key = 'Timeline', value = 'CAR',
+                            as.character(timeline)
                             )
         # order timeline as the squence of -40:40
         QEA_ggCAR$Timeline %<>% factor(levels = as.character(timeline), ordered = TRUE)
@@ -588,44 +577,51 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         # plot title 
         title_char <- paste("The path of grouped cumulative abnormal returns", 
                 "\nfollowing the stocks's quarterly earnings reports at accounting period", 
-                glue("{(Accprd + days(1)) %m+% months(-3)} ~ {Accprd} were announced"),
+                glue("{(Accprd[[y]][q] + days(1)) %m+% months(-3)} ~ {Accprd[[y]][q]} were announced"),
                 sep = " "
                 )
         
-        # # the index of the rect in plot of CAR
-        # rect_index <- tibble::tribble(
-        #     ~tier, ~xmin, ~xmax, ~ymin, ~ymax,
-        #     1, -10,  0,  0.0025,  0.0175,
-        #     1,   0,  5,   -0.01, -0.0025,
-        #     2, +10, 20,   -0.02,    0.02,
-        #     3, +25, 30,  0.0070,  0.0130,
-        #     3, +25, 30, -0.0275,   -0.02
-        # )
+        # the index of the rect in plot of CAR
+        rect_index <- tibble::tribble(
+            ~tier, ~x_min, ~x_max, ~y_min, ~y_max,
+                1,   -Inf,    -21,   -Inf,    Inf,
+                2,     15,    Inf,   -Inf,    Inf,
+        )
         
         # CAR
-        # make the timeline as continues number for path plot (factor is category data)
-        f_car <- ggplot(QEA_ggCAR, aes(x = as.integer(as.character(Timeline)), 
-                                       y = CAR, 
-                                       colour = g_PLS
-                                       )
-                        ) + 
+        f_car <- QEA_ggCAR %>% 
+            ggplot(aes(x = as.integer(as.character(Timeline)), y = CAR, colour = g_PLS)) + 
             geom_line() + 
             geom_point(aes(shape = g_PLS), size = 2.5) + 
                 scale_color_manual(values = c(brewer.pal(grp_num, "Set1"), "#999999")) +
                 scale_x_continuous(breaks = seq(-30, 30, by = 5)) + 
-                labs(title = title_char, x = "Time line", y = 'Cumulative Abnormal Return (CAR)') + 
+                labs(title = title_char, 
+                     x = "Time line", 
+                     y = 'Cumulative Abnormal Return (CAR)'
+                     ) + 
                 geom_ref_line(h = 0, colour = "#999999") +
                 theme_bw() +
                 theme(plot.title = element_text(size = 14),
-                      axis.title.y = element_text(face = c("italic"), margin = margin(r = 10)),
+                      axis.title.y = element_text(face = c("italic"), 
+                                                  margin = margin(r = 10)
+                                                  ),
                       legend.position = "bottom", 
                       legend.title = element_blank(),
-                      legend.text = element_text(size = 14, face = "bold")) # +
-            # geom_rect(data = rect_index, inherit.aes = FALSE,
-            #     aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = factor(tier)),
-            #     alpha = 0.2, show.legend = FALSE
-            #           )
+                      legend.text = element_text(size = 14, face = "bold")
+                      ) +
+            geom_rect(data = rect_index, 
+                      aes(xmin = x_min, xmax = x_max,
+                          ymin = y_min, ymax = y_max, 
+                          # fill = factor(tier)
+                          ),
+                      alpha = 0.3, 
+                      show.legend = FALSE, inherit.aes = FALSE
+                      )
             
+        ggsave(glue("{Accprd[[y]][q]}_path_gCAR.pdf"),
+               width = 16, height = 9
+               )
+        
         # calculate the standard deviation of daily returns of stocks for plot at last
         QEA_Dret_sd <- lapply(stkeve, add_column, 
                               "timeline" = factor(timeline, ordered = TRUE)
@@ -636,11 +632,11 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
         
         QEA_Dret_sd$timeline %<>% as.character() %>% as.integer()
         # standard deviation of stock's real daily return
-        f_Dret_sd <- ggplot(QEA_Dret_sd, aes(x = as.integer(as.character(timeline)), 
-                                             y = Dretmrf_sd, 
-                                             colour = g_PLS
-                                             )
-                            ) +
+        ggplot(QEA_Dret_sd, aes(x = as.integer(as.character(timeline)), 
+                                y = Dretmrf_sd, 
+                                colour = g_PLS
+                                )
+               ) +
                 geom_smooth() + 
                 geom_point(aes(shape = g_PLS), size = 2) +
                 scale_color_brewer(palette = "Set1") +
@@ -656,15 +652,20 @@ for (y in seq_along(Accprd_seq)) {  # loop in year
                       legend.position = "none",
                       )
         
+        ggsave(filename = paste(figure_term, "sd.pdf", sep = '_'),
+           width = 8, height = 6, 
+           scale = 1
+           )
+            
         # Export the comprehensive plot
-        multi_panel_figure(width = 320, height = 300, columns = 4, rows = 5) %>%
+        multi_panel_figure(width = 320, height = 300, columns = 4, rows = 6) %>%
                 fill_panel(f_car, column = 1:4, row = 1:2) %>%
-                fill_panel(f_coef, column = 1:2, row = 3:5) %>% 
-                fill_panel(f_Dret_sd, column = 3:4, row = 3) %>%
-                fill_panel(f_acc_size, column = 3, row = 4:5) %>%
-                fill_panel(f_acc_eps, column = 4, row = 4:5) %>%
-                        save_multi_panel_figure(glue("{Accprd}_Figure_histogram-gSizeEarn.pdf"))
-    
+                fill_panel(f_coef, column = 1:2, row = 3:6) %>% 
+                fill_panel(f_acc_size, column = 3, row = 3:4) %>%
+                fill_panel(f_acc_eps, column = 4, row = 3:4) %>%
+                fill_panel(f_intercept, column = 3:4, row = 5:6) %>%
+                        save_multi_panel_figure(glue("{Accprd[[y]][q]}_grp-CAR-Size-Earn.pdf"))
+        
     }
     
 }
@@ -741,8 +742,8 @@ QEA_db <- dbConnect(RSQLite::SQLite(), "~/OneDrive/Data.backup/QEAData/QEA_db.sq
 
 # taking the intersection of quarterly classification results,
 # the quarterly PLS classification results will be reshaped to yearly clustering
-PLS_grp_inter <- vector(mode = "list", length = length(Accprd_seq)) %>% 
-        set_names(names(Accprd_seq))
+PLS_grp_inter <- vector(mode = "list", length = length(Accprd)) %>% 
+        set_names(names(Accprd))
 
 for (y in seq_along(PLS_grp)) {
     
