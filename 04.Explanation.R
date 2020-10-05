@@ -29,17 +29,17 @@ library(DBI)
 library(RSQLite)
 library(dbplyr)
 
+theme_set(
+    theme_ipsum()
+)
 # self-defined function ----------------------------------------------------
 # cluster the stocks in our sample according to the difference value of  
 # one accounting index from prior quarter to current quarter
-cluster_acc <- function(x = Acc_ind, 
-                        accounting,
-                        grp_col_name,
+cluster_acc <- function(x = Acc_ind, accounting, grp_col_name,
                         diff_period = c(Accprd,(Accprd+days(1))%m+%months(-3)+days(-1)), 
                         break_point = c(0, 0.3, 0.7, 1),
                         break_label = c("Descend", "Neutral", "Ascend")
                         ) {
-        
     # Input:
     # accounting: which accounting index is used to structure a group variable?
     # grp_col_name: the name of portfolio 
@@ -54,15 +54,14 @@ cluster_acc <- function(x = Acc_ind,
               !!grp_col_name := cut(diff, 
                                     breaks = quantile(diff, break_point, na.rm = TRUE), 
                                     labels = break_label,
-                                    ordered_result = TRUE, 
-                                    include.lowest = TRUE)
+                                    ordered_result = TRUE, include.lowest = TRUE)
               )
     
 }
 
 # function to calculate the value of factors, 
 # imitating the structure process of Fama-French (1993)
-calc_fct <- function(cluster, fct_name, class = 't') {
+calc_fct <- function(cluster, fct_name, class) {
     
     if (class == 't') {  # calculate the value of factor (t)
               
@@ -102,9 +101,8 @@ calc_fct <- function(cluster, fct_name, class = 't') {
 
 
 # regressions in three aspects
-lm_trdff <- function(df, ...,
-                     data_structure,  
-                     SE_type = "stata", 
+lm_trdff <- function(df, data_structure,  
+                     SE_type = "stata", ..., 
                      formula_lhs, formula_rhs  
                      ) {
     # Input: 
@@ -120,7 +118,7 @@ lm_trdff <- function(df, ...,
     
     if (data_structure == "ts") {  # run panel data regression
         
-        lm_formula <- Formula(AbRet | AR_tau ~ 
+        reg_formula <- Formula(AbRet | AR_tau ~ 
                 # using trading data as explanation variables 
                 VMG_t + RMW_t + Amplitude + Turnover + Liquidility
                 # take the group information as the interaction term
@@ -132,7 +130,7 @@ lm_trdff <- function(df, ...,
         
     } else if (data_structure == "cs") {  # run cross-sectional regression 
                 
-        lm_formula <- Formula(AbRet ~ 
+        reg_formula <- Formula(AbRet ~ 
                 # run by every tau
                 VMG_t * g_PLS + RMW_t * g_PLS  + Amplitude + Turnover + Liquidility 
                 # when taking tau as interaction term, 
@@ -144,16 +142,16 @@ lm_trdff <- function(df, ...,
             
     } else stop("Please select a model correctly!")
     
-    lm_result <- lm_robust(data = df, ...,
-                           se_type = SE_type, 
-                           formula = formula(lm_formula, 
-                                             lhs = formula_lhs, rhs = formula_rhs)
+    lm_result <- lm_robust(data = df, 
+                           formula = formula(reg_formula, 
+                                             lhs = formula_lhs, rhs = formula_rhs),
+                           se_type = SE_type, ...
                            )
 
 }
 
 # Specifying the basic parameter of data --------------------------------
-Accprd <- ymd('2017-03-31')
+Accprd <- ymd('2017-12-31')
 model_type <- "CH4"
 value_base <- 'EPS'
 Pretype <- 6L
@@ -303,8 +301,8 @@ Acc_ind <- tbl(QEA_db, "quarter") %>%
 
 # statistical properties -------------------------------------------------
 # plot the standard deviation of returns ====
-title_char <- paste0('The standard deviation of the weighted daily returns and ',
-                     'the weighted abnormal returns of stocks')
+title_char <- paste0('The standard deviation of the average daily returns and ',
+                     'the average abnormal returns of grouped stocks')
 caption_char <- paste('Accounting quarter,', 
                       (Accprd + days(1)) %m+% months(-3), '~', Accprd,
                       sep = ' ')
@@ -323,8 +321,7 @@ gather(key = 'sd_type', value = 'sd_value', Real, Abnormal) %>%
         scale_x_continuous(breaks = seq(-(TS-1L)/2L, (TS-1L)/2L, by = 5)) + 
         labs(title = title_char, caption = caption_char,
              y = "Standard deviation of returns", x = "Time line",
-             linetype = 'Return', color = 'Classification') + 
-        theme_ipsum()
+             linetype = 'Return', color = 'Classification')
 
 ggsave(filename = paste(file_char, "DR_AR_gsd.pdf", sep = '_'), 
        width = 16, height = 9,
@@ -344,23 +341,19 @@ window_path <- function(cluster, ...) {
     summarise("avgDret" = mean(Dretnd), .groups = "drop") %>% 
         ggplot(data = filter(., group != "Neutral"), 
                mapping = aes(x = as.integer(as.character(Timeline)), 
-                             y = avgDret,
-                             colour = g_PLS)
+                             y = avgDret)
                ) + 
             geom_path(aes(linetype = group)) +
                 labs(title = title_char, caption = caption_char, 
                      x = TeX("Timeline ($\\tau$)"), y = "Average daily return", 
                      colour = 'Classification',
                      linetype = "Adjustment") +
-                # facet_wrap(facets = vars(g_PLS), nrow = grp_num) + 
-                scale_color_brewer(palette = 'Set1') + 
+                facet_wrap(facets = vars(g_PLS), nrow = grp_num) + 
                 scale_x_continuous(breaks = seq(-(TS-1L)/2L, (TS-1L)/2L, by = 5)) + 
             geom_hline(yintercept = 0, linetype = "dashed", color = "grey", size = 1.5) + 
             geom_rect(data = rect_index, 
                       aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), 
-                      alpha = 0.3, show.legend = FALSE, inherit.aes = FALSE) + 
-                theme_ipsum() +
-                theme(...)
+                      alpha = 0.3, show.legend = FALSE, inherit.aes = FALSE)
 
 }
 # PE - VMG ====
@@ -467,50 +460,97 @@ filter(tau %in% as.character(qtr_term)) %>%
 lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2) %>% 
 texreg(include.ci = FALSE, dcolumn = TRUE, booktabs = TRUE, digits = 3,
           override.se = .$statistic, override.pvalues = .$p.value) %>% 
-gsub(pattern = "VMG_t", replacement = "VMG", fixed = TRUE, x = .) %>%
-gsub(pattern = "RMW_t", replacement = "RMM", x = .) %>%
-gsub(pattern = "tau", replacement = "tau = ", x = .) %>%
-gsub(pattern = "g_PLS", replacement = "", x = .) %>%
+gsub(pattern = "VMG\\_t", replacement = "VMG", fixed = T) %>%
+gsub(pattern = "RMW\\_t", replacement = "RMM", fixed = T) %>%
+gsub(pattern = "tau", replacement = "tau = ") %>%
+gsub(pattern = "g\\_PLSgroup", replacement = "group", fixed = T) %>%
 cat()
 
 # Parameter visualization -------------------------------------------------
-# function to plot the estimate value with graph of path and point
-stats_plot <- function(reg, str_grep, inter_type,
-                       plot_title, ...) {
+# function to visualize estimate values using graphic of path and point
+stats_plot <- function(reg, inter_type, factor_name, ...) {
 
-    if (inter_type == "tau") {  
-            # focus on the parameters of terms that tau interact with factor
-            tau <- setdiff(qtr_term, 0)
-    } else if (inter_type == "grp") {  
-            # compare the value of parameters among group (diff-in-diff-in-diff)
-            tau <- c(0, setdiff(qtr_term, 0))
+    # function to extract coefficients and p-value of regression
+    data_extract <- function(str_grep) {
+      
+        df <- vector(mode = 'list', length = length(factor_name)) %>% 
+            `names<-`(factor_name)
+        
+        for (i in seq_along(factor_name)) {
+            str_factor <- paste0(factor_name[i], str_grep)
+            df[[i]] <- tibble(
+                'coef' = reg$coefficients %>% `[`(grep(str_factor, x = names(.))),
+                'pv' =  reg$p.value %>% `[`(grep(str_factor, x = names(.)))
+                )
+        }
+          
+        if (any(map_int(df, nrow) != length(tau))) {
+            stop(paste("The length of parameters is not same with tau's,",
+                       "\nPlease revise your regular expression!")
+                 )
+        } else map_dfr(df, add_column, 'tau' = tau, .id = 'Factor') %>% 
+                          arrange(Factor, tau)
+        
     }
     
-    df_est <- tibble(
-        'coef' = reg$coefficients %>% `[`(grep(pattern = str_grep, x = names(.))),
-        'pv' = reg$p.value %>% `[`(grep(pattern = str_grep, x = names(.))))
+    # function to visualize parameters 
+    draw_plot <- function(x) {
+        ggplot(data = x, mapping = aes(x = tau, y = coef)) +
+        geom_path(aes(linetype = Factor)) +
+        geom_point(aes(colour = cut(pv, breaks = c(0, 0.05, 0.1, 1)))) +
+        labs(title = title_char, caption = caption_char,
+             y = 'The value of coefficients', x = TeX("Timeline ($\\tau$)"),
+             colour = 'P-value') +
+        scale_color_brewer(palette = 'Set1') + 
+        geom_hline(yintercept = 0, linetype = "dashed", color = "grey", size = 1.5) 
+    }
     
-    if (nrow(df_est) != length(tau)) {
-    
-        stop(paste("The length of parameters is not same with tau's,", 
-                   "\nPlease revise your regular expression!")
-             )
-    
-    } else {
+    if (inter_type == "tau") {  
+        # focus on the parameters of factors that only interact with tau
+        tau <- setdiff(qtr_term, 0)
+        regexp_char <- "[[:punct:]]t[[:punct:]]tau[[:punct:]]?[[:digit:]]+$"
+        title_char <- TeX('Factor interact with $\\tau$')
+        data_extract(regexp_char) %>% draw_plot()
+            
+    } else if (inter_type == "grp") {  
+        # compare the parameters value between groups (diff-in-diff-in-diff)
+        tau <- c(0, setdiff(qtr_term, 0))
+        regexp_char <- paste0("[[:punct:]]t[[:punct:]]tau[[:punct:]]?[[:digit:]]+", 
+                              "[[:punct:]]g[[:punct:]]PLSgroup[[:blank:]]")
+        reg_est <- data_extract(paste0(regexp_char, 'two'))
         
-        tibble('tau' = tau, df_est) %>% 
-        arrange(tau) %>% 
-        ggplot(mapping = aes(x = tau, y = coef)) + 
-                geom_path(linetype = 'dashed') + 
-                geom_point(aes(colour = pv)) + 
-                labs(title = plot_title, caption = caption_char,
-                     y = 'The value of coefficients', x = TeX("Timeline ($\\tau$)"),
-                     colour = 'P-value') + 
-                scale_color_gradient(low = "blue", high = "red") + 
-                geom_hline(yintercept = 0, linetype = "dashed", color = "grey", size = 1.5) + 
-                theme_ipsum() + 
-                theme(...)
+        if (grp_num == 2) {
+          
+            title_char <- TeX('Factor interact with $\\tau$, and as contrast to group one')
+            draw_plot(reg_est)
         
+        } else {  title_char <- TeX('Factor interact with $\\tau$ and multiple groups')
+          
+            if (grp_num == 3) {
+                
+                rbind(reg_est, data_extract(paste0(regexp_char, 'three'))) %>% 
+                add_column('group' = rep(c('group two', 'group three'), 
+                                         each = nrow(reg_est)
+                                         )
+                           ) %>% 
+                draw_plot() + 
+                facet_wrap(facets = vars(group), ncol = grp_num - 1)     
+              
+            } else if (grp_num == 4) {
+                
+                rbind(reg_est, 
+                      data_extract(paste0(regexp_char, 'three')),
+                      data_extract(paste0(regexp_char, 'four'))
+                      ) %>% 
+                add_column('group' = rep(c('group two', 'group three', 'group four'), 
+                                         each = nrow(reg_est)
+                                         )
+                           ) %>% 
+                draw_plot() + 
+                facet_wrap(facets = vars(group), nrow = grp_num - 1)     
+                
+            }
+        }
     }
 }
 
@@ -523,56 +563,21 @@ reg_panel <- win_stk %>%
         dplyr::rename(tau = Timeline) %>% 
         filter(tau %in% as.character(qtr_term)) %>% 
         lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2)
+
 # factor:tau ====
-multi_panel_figure(width = 160, height = 180, columns = 1, rows = 2) %>% 
-fill_panel(stats_plot(reg = reg_panel, 
-                      inter_type = 'tau',
-                      str_grep = "^VMG[[:punct:]]t[[:punct:]]tau[[:punct:]]?[[:digit:]]+$",
-                      plot_title = TeX('Factor $VMG^{ts}_t$ interact with $\\tau$')
-                      ), 
-           column = 1, row = 1) %>% 
-fill_panel(stats_plot(reg = reg_panel, 
-                      inter_type = 'tau',
-                      str_grep = "^RMW[[:punct:]]t[[:punct:]]tau[[:punct:]]?[[:digit:]]+$",
-                      plot_title = TeX('Factor $RMW^{ts}_t$ interact with $\\tau$')
-                      ), 
-           column = 1, row = 2) %>% 
-save_multi_panel_figure(filename = paste(file_char, "factor-tau.pdf", sep = '_'))
+stats_plot(reg = reg_panel, 
+           inter_type = 'tau',
+           factor_name = c('VMG', 'RMW')
+           )
+
+ggsave(filename = paste(file_char, "factor-tau.pdf", sep = '_'),
+       width = 16, height = 9, scale = 0.75)
                             
 # factor:tau:g_PLS, diff-diff-diff ====
-str_char <- paste0("[[:punct:]]t[[:punct:]]tau[[:punct:]]?[[:digit:]]+", 
-                   "[[:punct:]]g[[:punct:]]PLSgroup[[:blank:]]")
-    
-multi_panel_figure(width = 160, height = 180, columns = 1, rows = 2) %>% 
-fill_panel(stats_plot(reg = reg_panel,
-                      inter_type = 'grp',
-                      str_grep = paste0("^VMG", str_char, "two"),
-                      plot_title = TeX('Factor $VMG_t$ interact with $\\tau$, group two')
-                      ), 
-           column = 1, row = 1) %>% 
-fill_panel(stats_plot(reg = reg_panel,
-                      inter_type = 'grp',
-                      str_grep = paste0("^RMW", str_char, "two"),
-                      plot_title = TeX('Factor $RMW_t$ interact with $\\tau$, group two')
-                      ), 
-           column = 1, row = 2) %>% 
-save_multi_panel_figure(filename = paste(file_char, "factor-tau-g2.pdf", sep = '_'))
-    
-if (grp_num == 3L) {
+stats_plot(reg = reg_panel, 
+           inter_type = 'grp', 
+           factor_name = c('VMG', 'RMW')
+           )
 
-multi_panel_figure(width = 160, height = 180, columns = 1, rows = 2) %>% 
-fill_panel(stats_plot(reg = reg_panel,
-                      inter_type = 'grp',
-                      str_grep = paste0("^VMG", str_char, "three"),
-                      plot_title = TeX('Factor $VMG_t$ interact with $\\tau$, group three')
-                      ), 
-           column = 1, row = 1) %>% 
-fill_panel(stats_plot(reg = reg_panel,
-                      inter_type = 'grp',
-                      str_grep = paste0("^RMW", str_char, "three"),
-                      plot_title = TeX('Factor $RMW_t$ interact with $\\tau$, group three')
-                      ), 
-           column = 1, row = 2) %>% 
-save_multi_panel_figure(filename = paste(file_char, "factor-tau-g2.pdf", sep = '_'))
-
-}
+ggsave(filename = paste(file_char, "factor-tau-grp.pdf", sep = '_'),
+       width = 16, height = 9, scale = 0.75)
