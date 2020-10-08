@@ -1,0 +1,181 @@
+---
+# title: "The OLS estimate of Fama-French Multi-factor Model in Chinese A-share Markets"
+# author: "Hongyu Hu"
+# date: "`r Sys.Date()`"
+output: 
+  pdf_document
+    
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \usepackage{multirow}
+  - \usepackage{wrapfig}
+  - \usepackage{float}
+  - \usepackage{colortbl}
+  - \usepackage{pdflscape}
+  - \usepackage{tabu}
+  - \usepackage{threeparttable}
+  - \usepackage{threeparttablex}
+  - \usepackage[normalem]{ulem}
+  - \usepackage{makecell}
+  - \usepackage{xcolor}
+
+---
+
+```{r include=FALSE}
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(magrittr)
+library(lubridate)
+library(forcats)
+library(glue)
+# generate the tables as shown in Fama(1993)
+# using package knitr::kable and kableExtra
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+library(kableExtra)
+options(knitr.table.format = "latex")
+
+
+model_type <- 'CH4'
+value_base <- 'EPS'
+
+if (model_type == 'CH3') {
+  
+    model_factor <- c('mkt_rf', 'SMB', 'VMG') 
+    model_formula <-  "$R_{it}-R_{ft} = \\\\alpha_i + \\\\beta_i\ (R_{mt}-R_{ft}) + s_i SMB_t + v_i VMG_t + \\\\epsilon_it$"
+  
+} else if (model_type == 'CH4') {
+  
+    model_factor <- c('mkt_rf', 'SMB', 'VMG', 'RMW') 
+    model_formula <-  "$R_{it}-R_{ft} = \\\\alpha_i + \\\\beta_i\ (R_{mt}-R_{ft}) + s_i SMB_t + v_i VMG_t + r_i RMW_t + \\\\epsilon_it$"
+  
+}
+  
+# import regression results of portfolios by quarter =====
+load(glue('~/OneDrive/Data.backup/QEAData/{model_type}/quarterly_{value_base}_{model_type}.RData'))
+# quarter terms
+Accprd <- as.Date(names(potfolreg), origin = '1970-01-01')
+# statistics of regression
+potfolreg %<>% map(select, -c('data', 'model')) %>% 
+    map_dfr(tidyr::unnest, cols = c(Coef), .id = "quarter") %>% 
+    select(-c("std.error", "p.value")) %>% 
+    mutate('term' = factor(term, 
+                           levels = c('(Intercept)', model_factor),
+                           labels = c('Intercept', gsub(pattern = 'mkt_rf', replacement = 'MKT', x = model_factor))
+                           ),
+           'g_Value' = factor(g_Value, levels = c("Value", 3, 2, "Growth")),
+           'g_Profitability' = fct_relevel(g_Profitability, c('Robust', 3, 2, 'Weak'))
+           ) %>% 
+    rename(Size = g_Size, Value = g_Value, Profitability = g_Profitability)
+
+# the row identity
+Accprd.char <- vector(length = length(Accprd))
+for (i in 1:length(Accprd.char))
+    Accprd.char[i] <- glue("{(Accprd[i] + days(1)) %m+% months(-3L)} ~ {Accprd[i]}")
+
+pack_row <- rep(4, length = length(Accprd)) %>% `names<-`(Accprd.char)
+
+# the character of footnote
+footnote.char <- c(
+    glue("The regression model is {model_formula}."),
+    
+    "$R_t$ is the value-weighted percent daily return of Size-Value-Profitability diversified portfolios.
+    $R_f$ is the daily one-year deposit interest rate specified by the Central Bank of China.
+    SMB (small minus big) is the return on the mimicking portfolio for the size factor in stock returns.
+    VMG (value minus growth) is the return on the mimicking portfolio for the earnings-to-price factor.
+    RMW (robust minus weak) is the return on the mimicking portfolio for the earnings-per-share factor.",
+    
+    "The Size-Value-Profitability diversified stock portfolios are formed as follows.
+    Each quarter \\\\textit{q} Chinese A-share markets quintlie breakpoints for size, \\\\textit{ME},
+    measured at the end of last quarter \\\\textit{q-1}, are used to allocate stocks to five size quintiles.
+    Similarly, the quintile breakpoints for \\\\textit{PE} and \\\\textit{EPS} are used to allocate stocks to four clusters. 
+    At last, The divrersified portfolios are the intersections of the size, value, and profitability groups.",
+    
+    paste("The value-weighted daily percent returns on the portfolios", 
+          "are calculated form the begining of quarter \\\\textit{q}, to the end of quarter \\\\textit{q}", 
+          "using the number of earnings and all common shares within the financial report", 
+          "of accounting quarter \\\\textit{q-1} and the closing price at the last day of quarter \\\\textit{q-1}.", 
+          sep = " "
+          )
+    )
+
+```
+
+```{r results = "asis"}
+model_term <- levels(potfolreg$term)
+
+for (i in seq_along(model_term)) { # loop in model factors and estimate intercept
+  
+  # split by estimate coefficients and statistic,
+  # then we transform them to wide form by Size
+  df_est <- filter(potfolreg, term == model_term[i]) %>% 
+                   select(-c("term", "statistic")) %>% 
+                   spread(key = Size, value = estimate)
+  
+  df_stc <- filter(potfolreg, term == model_term[i]) %>% 
+                   select(-c("term", "estimate")) %>% 
+                   spread(key = Size, value = statistic)
+  
+  # 
+  mat_est <- df_est %$% 
+      tibble::tibble(spread(select(., -'Big'), key = Value, value = Small),
+                     spread(select(., -'Small'), key = Value, value = Big),
+                     .name_repair = "minimal"
+                     )
+
+  mat_stc <- df_stc %$%  
+      tibble::tibble(spread(select(., -'Big'), key = Value, value = Small),
+                     spread(select(., -'Small'), key = Value, value = Big),
+                     .name_repair = "minimal"
+                     )
+  
+  mat <- tibble::tibble(mat_est, mat_stc, .name_repair = "minimal") %>% 
+      `[`(, -c(1, 7, 8, 13, 14, 19, 20)) %>% 
+      as.data.frame()
+  
+  if (model_term[i] == 'Intercept') {
+
+      # the number of digits
+      mat[, -1] %<>% round(digits = 4) %>% format(nsmall = 4)
+      # caption
+      caption_char <- paste("Intercepts from excess stock return regressions for stock portfolios",
+                            "formed on market size, earnings-to-price ratio, and earnings-per-share.",
+                            sep = " ")
+      
+  } else {
+
+      mat[, -1] %<>% round(digits = 3) %>% format(nsmall = 3)
+
+      caption_char <- paste(glue("Factor ${model_term[i]}$"), "of excess stock returns regerssions for stock portfolios",
+                            "formed on market size, earnings-to-price ratio, and earnings-per-share.",
+                            sep = " ")
+
+  }
+
+  # generate table
+    print(
+      
+        kable(x = mat, booktabs = TRUE, longtable = TRUE,
+              align = c('c', rep('r', 16)), escape = FALSE,
+              caption = caption_char
+              ) %>%
+            add_header_above(c(" " = 1, "Small" = 4, "Big" = 4, "Small" = 4, "Big" = 4)) %>%
+            add_header_above(c(" " = 1, "Estimate" = 8, "t value" = 8), italic = T) %>%
+            kable_styling(position = "center", font_size = 8,
+                          latex_options = c("hold_position", "repeat_header")) %>%
+            footnote(alphabet = footnote.char,
+                     threeparttable = TRUE, escape = FALSE) %>%
+            pack_rows(index = pack_row, latex_gap_space = "1.2em") %>% 
+            landscape() 
+      
+    )
+  
+  cat('\n\n<!-- -->\n\n')
+
+}
+
+```
+

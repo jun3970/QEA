@@ -234,7 +234,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                      caption = caption_char
                      ) + 
                 facet_wrap(~ g_PLS, ncol = grp_num, scales = 'free_x', drop = TRUE) + 
-                scale_fill_brewer(palette = 'Set1') 
+                scale_fill_brewer(palette = 'Set1') + 
+                theme(axis.text.x = element_blank())
         
         ggsave(filename = paste(figure_term, "Industry.pdf", sep = '_'),
                width = 8, height = 6, 
@@ -258,7 +259,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                          y = "frequency", x = "Weekday", fill = "Weekday",
                          caption = caption_char) + 
                     facet_wrap(~g_PLS, ncol = grp_num, scales = 'free_x', drop = TRUE) + 
-                    scale_fill_brewer(palette = "Blues") 
+                    scale_fill_brewer(palette = "Blues") + 
+                    theme(axis.text.x = element_blank())
         
         ggsave(filename = paste(figure_term, "Weekday.pdf", sep = '_'),
                width = 8, height = 6)
@@ -337,7 +339,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                 facet_wrap(vars(CompanyOpacity), nrow = grp_num) + 
                 theme(legend.position = 'none')
         
-        multi_panel_figure(width = 320, height = 320, columns = 2, rows = 3) %>%
+        multi_panel_figure(width = 320, height = 320, columns = 2, rows = 3,
+                           panel_label_type = "decimal") %>%
         fill_panel(f_opacity, column = 1, row = 1) %>%
         fill_panel(f_group_opacity, column = 2, row = 1) %>% 
         fill_panel(f_size_opacity, column = 1:2, row = 2:3) %>% 
@@ -396,7 +399,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                  y = "Density", x = "The value of estimated intercept",
                  fill = "Classification (PLS)") +
             scale_fill_brewer(palette = 'Set1') + 
-            theme_bw()
+            theme_bw() + 
+            theme(legend.position = c(.75,.85))
         
         ggsave(filename = paste(figure_term, "Intercept.pdf", sep = '_'),
                width = 8, height = 6)

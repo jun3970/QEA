@@ -305,6 +305,9 @@ variable_name <- c("TradingDate", "Dretnd", "Dret_rf",
                    "Dnshrtrd", "Dnvaltrd", "Turnover", "Liquidility", 
                    "Amplitude", "Dsmvtll", "Dsmvosd")
 
+reg_Accprd <- vector(mode = 'list', length = length(Accprd)) %>% 
+    `names<-`(Accprd)
+
 for (i in seq_along(Accprd)) {
     
     print(Accprd[i])
@@ -542,21 +545,23 @@ for (i in seq_along(Accprd)) {
     qtr_term <- c(-5:5)  # just running a part of event window
     # the core idea is we employ RMW_t to explain AR_t once at a same tau (cross-sectional) 
     # and we will focus on the difference of estimate coefficients among different tau and group
-    win_stk %>% 
+    reg_Accprd[[i]] <- win_stk %>% 
     mutate('win_eve' = map(win_eve, left_join, factor_t, by = "TradingDate")) %>%
     unnest(cols = 'win_eve') %>% 
     # re-level the time line (take the tau = 0 as benchmark in regression)
     mutate('Timeline' = fct_relevel(Timeline, as.character(c(0, timeline[timeline != 0])))) %>% 
     dplyr::rename(tau = Timeline) %>% 
     filter(tau %in% as.character(qtr_term)) %>% 
-    lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2) %>% 
+    lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2)
+    
+    reg_Accprd[[i]] %>% 
     texreg(include.ci = FALSE, dcolumn = TRUE, booktabs = TRUE, digits = 3,
-              override.se = .$statistic, override.pvalues = .$p.value) %>% 
+           override.se = .$statistic, override.pvalues = .$p.value) %>% 
     gsub(pattern = "VMG\\_t", replacement = "VMG", fixed = T) %>%
     gsub(pattern = "RMW\\_t", replacement = "RMM", fixed = T) %>%
     gsub(pattern = "tau", replacement = "tau = ") %>%
     gsub(pattern = "g\\_PLSgroup", replacement = "group", fixed = T) %>%
-    cat()
+    cat() 
     
     # Parameter visualization -------------------------------------------------
     qtr_term <- c(-15:10)  # just visual a part of event window
@@ -589,3 +594,7 @@ for (i in seq_along(Accprd)) {
 }
 
 dbDisconnect(QEA_db)
+
+save(reg_Accprd, 
+     file = file.path('~/OneDrive/Data.backup/QEAData', model_type, 'final_reg.RData')
+     )
