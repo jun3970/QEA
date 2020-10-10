@@ -30,7 +30,7 @@ load(file = "./FirmAttr.RData")
 load(file = "./ReportInfo.RData"); rm(PreRept)
 # assign basic parameters about quarter and sample attributes
 Accprd <- months(seq(from = 0, by = 3, length = 4)) %>% 
-        mapply('%m+%', ymd('2017-03-31'), .) %>% 
+        mapply('%m+%', ymd('2015-03-31'), .) %>% 
         base::as.Date(origin = '1970-01-01') %>% 
         split(f = year(.))  # split by year
 # the type of stocks that weather had publish pre-report
@@ -274,8 +274,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                 theme_bw() +
                 scale_fill_brewer(palette = "Set1") + 
                 theme(legend.position = 'none',
-                      axis.title.y = element_text(margin = margin(r = 10))
-                      ) 
+                      axis.title.x = element_text(inherit.blank = FALSE)
+                      )
         
         # the information from AF_Cfeature ====
         # just need to select annual data of this year
@@ -335,7 +335,6 @@ for (y in seq_along(Accprd)) {  # loop in year
                     scale_fill_brewer(palette = "Set1") + 
                 labs(title = title_char,
                      y = "The logarithm of company size") + 
-                theme_ipsum() + 
                 facet_wrap(vars(CompanyOpacity), nrow = grp_num) + 
                 theme(legend.position = 'none')
         
@@ -400,7 +399,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                  fill = "Classification (PLS)") +
             scale_fill_brewer(palette = 'Set1') + 
             theme_bw() + 
-            theme(legend.position = c(.75,.85))
+            theme(legend.position = c(.80,.85))
         
         ggsave(filename = paste(figure_term, "Intercept.pdf", sep = '_'),
                width = 8, height = 6)
@@ -530,7 +529,8 @@ for (y in seq_along(Accprd)) {  # loop in year
                           ),
                       alpha = 0.3, 
                       show.legend = FALSE, inherit.aes = FALSE) + 
-                theme(legend.position = "bottom")
+                theme(legend.position = "bottom",
+                      axis.title.x = element_text(inherit.blank = FALSE))
             
         ggsave(paste(figure_term, "gCAR.pdf", sep = '_'),
                width = 16, height = 9)
@@ -555,7 +555,6 @@ map_df(PLS_grp, ~ map_df(.x, "estimator", .id = "quarter"), .id = "year")
 
 # Part III, focus on the stocks which classification results are continually ----
 # one stock is clustered into a same class among quarters of a year 
-
 library(DBI)
 library(RSQLite)
 library(dbplyr)
@@ -609,11 +608,9 @@ tbl_query <- function(database = QEA_db,
 select_nest <- function(x, select_col = "g_PLS", value_col, key_name) {
     
     select(x, all_of(select_col), all_of(value_col)) %>% 
-            unnest(cols = value_col) %>% 
+            unnest(cols = all_of(value_col)) %>% 
             group_nest(Accper, g_PLS, .key = key_name)
-    
 }
-
 
 # link to database
 QEA_db <- dbConnect(RSQLite::SQLite(), "~/OneDrive/Data.backup/QEAData/QEA_db.sqlite")
@@ -636,7 +633,6 @@ for (y in seq_along(PLS_grp)) {
     } else stop(paste("The quarterly level of groups aren't same with at year",
                       names(PLS_grp)[y])
                 )
-
 }
 
 # take the complement of stocks existed in `PLS_grp_inter` with sample,
@@ -656,25 +652,22 @@ PLS_grp_unstable %<>%
                "date_prefix" = year,
                "date_suffix" = factor(quarter, 
                                       levels = c("1st", "2nd", "3rd", "4th"),
-                                      labels = c("0331", "0630", "0930", "1231")
-                                      )
+                                      labels = c("0331", "0630", "0930", "1231"))
                ) %>% 
         unite(date_prefix, date_suffix, col = "Accper", sep = "") %>% 
         mutate("accounting_quarter" = map2(Stkcd, Accper,
                                            ~ tbl_query(table_name = "quarter",
                                                        report_period = "quarterly",
                                                        stock_cd = .x,
-                                                       accounting_period = .y
-                                                       )
-                                          )
+                                                       accounting_period = .y)
+                                           )
                ) %>% 
         select(-Accper)
 
 # query accounting information in yearly and quarterly reports 
 # accounting to symbols of stocks and particular year 
 # for stocks which PLS classification are coherent
-PLS_grp_inter %<>% 
-        map(group_nest, g_PLS, .key = "Stkcd") %>% 
+PLS_grp_inter %<>% map(group_nest, g_PLS, .key = "Stkcd") %>% 
         imap(function(y, z) {
                 mutate(y, 
                        "Stkcd" = map(Stkcd, pull, "Stkcd"),
@@ -703,50 +696,50 @@ dbDisconnect(QEA_db)
 # price-to-earning (PE), F100101B, and earning per share (EPS), F020108
 # the theory foundation and basis idea of analysis them 
 # is the price measure identical equation, P = PE \times EPS 
-
 PLS_grp_unstable %<>% 
         mutate("accounting_quarter_PE" = map(.x = accounting_quarter, 
                                              ~ select(.x, "Accper", "Stkcd", "F100101B") %>% 
                                                  rename('PE' = F100101B)
                                              )
                )
-
 PLS_grp_inter %<>% 
         mutate("accounting_quarter_PE" = map(.x = accounting_quarter, 
                                              ~ select(.x, "Accper", "Stkcd", "F100101B") %>% 
                                                  rename('PE' = F100101B)
                                              )
                )
-
-# compose and compare accounting indicator between `inter` with `unstable`
+# compose and compare accounting indicator PE between `inter` with `unstable`
 PLS_grp_PE <- full_join(by = c('g_PLS', 'Accper'),
                         select_nest(PLS_grp_inter, 
                                     value_col = "accounting_quarter_PE", 
-                                    key_name = "inter_PE"
-                                    ),
+                                    key_name = "inter_PE"),
                         select_nest(PLS_grp_unstable, 
                                     value_col = "accounting_quarter_PE", 
-                                    key_name = "unstable_PE"
-                                    )
+                                    key_name = "unstable_PE")
                         ) %>% 
-        mutate('g_PLS' = fct_relabel(g_PLS, ~ str_c('g_', .)))
-
-# focus on PE
-pivot_longer(PLS_grp_PE, 
-             cols = c('inter_PE', 'unstable_PE'), 
-             names_to = 'class', values_to = 'value'
-             ) %>% 
-        unnest(cols = value) %>% 
-        filter(PE <= quantile(PE, 0.875, na.rm = TRUE),
-               PE >= quantile(PE, 0.125, na.rm = TRUE)
+        mutate('g_PLS' = fct_relabel(g_PLS, ~ str_c('g_', .)),
+               'year' = year(Accper)
                ) %>% 
-        # take a look at the distribution of PE of grouped stocks
-        ggplot(mapping = aes(x = class, y = PE)) + 
-                    geom_violin() + 
-                    facet_wrap(facets = g_PLS ~ Accper) +
-                    labs(y = "Price-to-earning(PE)")
+        arrange(Accper, g_PLS)
 
-ggsave(filename = "distribution_EP_grp.pdf",
-       path = file.path('~/OneDrive/Data.backup/QEAData/', model_type),
-       width = 16, height = 9)
+for (y in seq_along(Accprd)) {
 
+    filter(PLS_grp_PE, year == names(Accprd)[y]) %>% 
+    pivot_longer(cols = c('inter_PE', 'unstable_PE'),
+                 names_to = 'class', values_to = 'value'
+                 ) %>%
+    unnest(cols = value) %>%
+    filter(PE <= quantile(PE, 0.875, na.rm = TRUE),
+           PE >= quantile(PE, 0.125, na.rm = TRUE)
+           ) %>%
+    # take a look at the distribution of PE of grouped stocks
+    ggplot(mapping = aes(x = class, y = PE)) +
+            geom_violin() +
+            facet_wrap(facets = g_PLS ~ Accper) +
+            labs(y = "Price-to-earning(PE)")
+
+    ggsave(filename = glue("{names(Accprd)[y]}_EP_grp_dist.pdf"),
+           path = file.path('~/OneDrive/Data.backup/QEAData', model_type, names(Accprd)[y]),
+           width = 16, height = 9)
+
+}

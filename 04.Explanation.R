@@ -264,7 +264,7 @@ stats_plot <- function(reg, inter_type, factor_name, ...) {
 
 # Specifying the basic parameter of data --------------------------------
 Accprd <- months(seq(from = 0, by = 3, length = 4)) %>% 
-        mapply('%m+%', ymd('2017-03-31'), .) %>% 
+        mapply('%m+%', ymd('2014-03-31'), .) %>% 
         base::as.Date(origin = '1970-01-01')
 model_type <- "CH4"
 value_base <- 'EPS'
@@ -545,15 +545,21 @@ for (i in seq_along(Accprd)) {
     qtr_term <- c(-5:5)  # just running a part of event window
     # the core idea is we employ RMW_t to explain AR_t once at a same tau (cross-sectional) 
     # and we will focus on the difference of estimate coefficients among different tau and group
-    reg_Accprd[[i]] <- win_stk %>% 
-    mutate('win_eve' = map(win_eve, left_join, factor_t, by = "TradingDate")) %>%
-    unnest(cols = 'win_eve') %>% 
-    # re-level the time line (take the tau = 0 as benchmark in regression)
-    mutate('Timeline' = fct_relevel(Timeline, as.character(c(0, timeline[timeline != 0])))) %>% 
-    dplyr::rename(tau = Timeline) %>% 
-    filter(tau %in% as.character(qtr_term)) %>% 
-    lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2)
+    win_stk %<>% 
+        mutate('win_eve' = map(win_eve, left_join, factor_t, by = "TradingDate")) %>%
+        unnest(cols = 'win_eve') %>% 
+        # re-level the time line (take the tau = 0 as benchmark in regression)
+        mutate('Timeline' = fct_relevel(Timeline, 
+                                        as.character(c(0, timeline[timeline != 0])))
+               ) %>% 
+        dplyr::rename(tau = Timeline)
     
+    reg_Accprd[[i]] <- win_stk %>%  
+            filter(tau %in% as.character(qtr_term)) %>% 
+            lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2)
+    # save
+    reg_Accprd[i] %>% save(file = paste(file_char, "_final_reg.RData", sep = '_'))
+    # print
     reg_Accprd[[i]] %>% 
     texreg(include.ci = FALSE, dcolumn = TRUE, booktabs = TRUE, digits = 3,
            override.se = .$statistic, override.pvalues = .$p.value) %>% 
@@ -564,13 +570,8 @@ for (i in seq_along(Accprd)) {
     cat() 
     
     # Parameter visualization -------------------------------------------------
-    qtr_term <- c(-15:10)  # just visual a part of event window
+    qtr_term <- c(-15:10)  # a more wide event window than model
     reg_panel <- win_stk %>% 
-            mutate('win_eve' = map(win_eve, left_join, factor_t, by = "TradingDate")) %>%
-            unnest(cols = 'win_eve') %>% 
-            # re-level the time line (take the tau = 0 as benchmark in regression)
-            mutate('Timeline' = fct_relevel(Timeline, as.character(c(0, timeline[timeline != 0])))) %>% 
-            dplyr::rename(tau = Timeline) %>% 
             filter(tau %in% as.character(qtr_term)) %>% 
             lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2)
     
@@ -579,16 +580,14 @@ for (i in seq_along(Accprd)) {
                inter_type = 'tau',
                factor_name = c('VMG', 'RMW')
                )
-    
     ggsave(filename = paste(file_char, "factor-tau.pdf", sep = '_'),
            width = 16, height = 9, scale = 0.75)
-                                
+                            
     # factor:tau:g_PLS, diff-diff-diff ====
     stats_plot(reg = reg_panel, 
                inter_type = 'grp', 
                factor_name = c('VMG', 'RMW')
                )
-    
     ggsave(filename = paste(file_char, "factor-tau-grp.pdf", sep = '_'),
            width = 16, height = 9, scale = 0.75)
 }
@@ -596,5 +595,4 @@ for (i in seq_along(Accprd)) {
 dbDisconnect(QEA_db)
 
 save(reg_Accprd, 
-     file = file.path('~/OneDrive/Data.backup/QEAData', model_type, 'final_reg.RData')
-     )
+     file = file.path('~/OneDrive/Data.backup/QEAData', model_type, 'final_reg_total.RData'))
