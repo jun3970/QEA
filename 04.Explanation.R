@@ -150,29 +150,36 @@ lm_trdff <- function(df, data_structure,
 # under the adjust effect of a accounting indicator
 window_path <- function(cluster, ...) {
     # cluster: group result based on accounting indicator
-    inner_join(win_stk, cluster, by = "Stkcd") %>% 
-    transmute(g_PLS, group, 
-             'Dret_tau' = map(win_eve, select, c('Timeline', 'Dretnd'))
-             ) %>% 
-    unnest(cols = 'Dret_tau') %>% 
-    group_by_at(.vars = c('Timeline', 'group', 'g_PLS')) %>% 
-    summarise("avgDret" = mean(Dretnd), .groups = "drop") %>% 
-        ggplot(data = filter(., group != "Neutral"), 
-               mapping = aes(x = as.integer(as.character(Timeline)), 
-                             y = avgDret)
+    
+    df <- inner_join(win_stk, cluster, by = "Stkcd") %>% 
+          transmute(g_PLS, group, 
+                   'Dret_tau' = map(win_eve, select, c('Timeline', 'Dretnd'))
+                   ) %>% 
+          unnest(cols = 'Dret_tau') %$% 
+          rbind(# grouped in accounting indicator and PLS
+                group_by_at(., .vars = c('Timeline', 'group', 'g_PLS')) %>% 
+                summarise("avgDret" = mean(Dretnd), .groups = "drop"),
+                # grouped just in accounting indicator
+                group_by_at(., .vars = c('Timeline', 'group')) %>% 
+                summarise("avgDret" = mean(Dretnd), .groups = "drop") %>% 
+                add_column('g_PLS' = c("unclassified"), .before = 1)
+                ) %>% 
+          mutate('g_PLS' = fct_relevel(g_PLS, c('unclassified', grp_name)))
+    
+        ggplot(data = filter(df, group != "Neutral"), 
+               mapping = aes(x = as.integer(as.character(Timeline)), y = avgDret)
                ) + 
             geom_path(aes(linetype = group)) +
                 labs(title = title_char, caption = caption_char, 
                      x = TeX("Timeline ($\\tau$)"), y = "Average daily return", 
                      colour = 'Classification',
                      linetype = "Adjustment") +
-                facet_wrap(facets = vars(g_PLS), nrow = grp_num) + 
+                facet_wrap(facets = vars(g_PLS), nrow = grp_num + 1) + 
                 scale_x_continuous(breaks = seq(-(TS-1L)/2L, (TS-1L)/2L, by = 5)) + 
             geom_hline(yintercept = 0, linetype = "dashed", color = "grey", size = 1.5) + 
             geom_rect(data = rect_index, 
                       aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), 
                       alpha = 0.3, show.legend = FALSE, inherit.aes = FALSE)
-
 }
 
 # function to visualize estimate values using graphic of path and point
@@ -263,8 +270,8 @@ stats_plot <- function(reg, inter_type, factor_name, ...) {
 }
 
 # Specifying the basic parameter of data --------------------------------
-Accprd <- months(seq(from = 0, by = 3, length = 4)) %>% 
-        mapply('%m+%', ymd('2014-03-31'), .) %>% 
+Accprd <- months(seq(from = 0, by = 3, length = 4*5)) %>% 
+        mapply('%m+%', ymd('2013-03-31'), .) %>% `[`(.!=ymd("2016-06-30")) %>% 
         base::as.Date(origin = '1970-01-01')
 model_type <- "CH4"
 value_base <- 'EPS'
@@ -398,7 +405,6 @@ for (i in seq_along(Accprd)) {
         
             stk_sam <- pull(win_stk, Stkcd)
             print("Whole sample will be analysis.")
-    
     }
     # the number of stocks in our sample this quarter
     N <- nrow(win_stk)
@@ -449,7 +455,7 @@ for (i in seq_along(Accprd)) {
             scale_color_brewer(palette = "Set1") +
             scale_x_continuous(breaks = seq(-(TS-1L)/2L, (TS-1L)/2L, by = 5)) + 
             labs(title = title_char, caption = caption_char,
-                 y = "Standard deviation of returns", x = "Time line",
+                 y = "Standard deviation of returns", x = TeX("Time line ($\\tau$)"),
                  linetype = 'Return', color = 'Classification')
     
     ggsave(filename = paste(file_char, "DR_AR_gsd.pdf", sep = '_'), 
@@ -503,11 +509,27 @@ for (i in seq_along(Accprd)) {
         lm_trdff(df = .,
                  data_structure = "ts", 
                  formula_lhs = 1, formula_rhs = 2)  
-        ) %>% 
-    texreg(l = ., custom.model.names = c('Panel', 'Interact with group'),
-           include.ci = FALSE, dcolumn = TRUE, booktabs = TRUE, digits = 3,
-           override.se = map(., 'statistic'), override.pvalues = map(., 'p.value')) %>% 
-    cat()
+        ) %T>% 
+    htmlreg(l = ., file = paste(file_char, 'TimeSeries_t.html', sep = '_'),
+            caption = "OLS-regression of abnormal return (t) on factors",
+            custom.model.names = c('Panel', 'Classification'),
+            caption.above = TRUE, include.ci = FALSE, 
+            dcolumn = TRUE, booktabs = TRUE, digits = 3,
+            override.se = map(., 'statistic'), override.pvalues = map(., 'p.value')
+            ) %$% 
+    capture.output(
+            texreg(l = ., caption = "OLS-regression of abnormal return (t) on factors",
+                   custom.model.names = c('Panel', 'Classification'),
+                   caption.above = TRUE, include.ci = FALSE, 
+                   dcolumn = TRUE, booktabs = TRUE, digits = 3,
+                   override.se = map(., 'statistic'), override.pvalues = map(., 'p.value')
+                   ) %>% 
+            gsub(pattern = "VMG\\_t", replacement = "VMG^{ts}_t", fixed = T) %>%
+            gsub(pattern = "RMW\\_t", replacement = "RMM^{ts}_t", fixed = T) %>%
+            gsub(pattern = "g\\_PLSgroup", replacement = "group", fixed = T),
+            file = paste(file_char, 'TimeSeries_t.tex', sep = '_'), 
+            append = FALSE, type = "output"
+    )
     ## tau (maybe useless to paper)
     mutate(win_stk, 
           'win_eve' = map(win_eve, left_join, factor_tau, by = "Timeline")
@@ -535,11 +557,27 @@ for (i in seq_along(Accprd)) {
         lm_trdff(data_structure = "ts",
                  formula_lhs = 2, formula_rhs = 4
                  )
-        ) %>% 
-    texreg(custom.model.names = c("Panel", "Interact with group", "Summarise"),
-           include.ci = FALSE, dcolumn = TRUE, booktabs = TRUE, digits = 4,
-           override.se = map(., 'statistic'), override.pvalues = map(., 'p.value')) %>% 
-    cat()
+        ) %T>% 
+    htmlreg(l = ., file = paste(file_char, 'TimeSeries_tau.html', sep = '_'),
+            caption = "OLS-regression of abnormal return (tau) on factors",
+            custom.model.names = c("Panel", "Classificaton", "Summarise"),
+            caption.above = TRUE, include.ci = FALSE, 
+            dcolumn = TRUE, booktabs = TRUE, digits = 4,
+            override.se = map(., 'statistic'), override.pvalues = map(., 'p.value')
+            ) %$% 
+    capture.output(
+            texreg(., custom.model.names = c("Panel", "Classificaton", "Summarise"),
+                   caption = "OLS-regression of abnormal return (tau) on factors",
+                   caption.above = TRUE, include.ci = FALSE, 
+                   dcolumn = TRUE, booktabs = TRUE, digits = 4,
+                   override.se = map(., 'statistic'), override.pvalues = map(., 'p.value')
+                   ) %>% 
+            gsub(pattern = "VMG\\_tau", replacement = "VMG^{ts}_{\\tau}", fixed = T) %>%
+            gsub(pattern = "RMW\\_tau", replacement = "RMM^{ts}_{\\tau}", fixed = T) %>%
+            gsub(pattern = "g\\_PLSgroup", replacement = "group", fixed = T),
+            file = paste(file_char, 'TimeSeries_tau.tex', sep = '_'), 
+            append = FALSE, type = "output"
+    )
     
     # cross-sectional ====
     qtr_term <- c(-5:5)  # just running a part of event window
@@ -554,20 +592,32 @@ for (i in seq_along(Accprd)) {
                ) %>% 
         dplyr::rename(tau = Timeline)
     
-    reg_Accprd[[i]] <- win_stk %>%  
+    reg_Accprd[[i]] <- win_stk %>% 
             filter(tau %in% as.character(qtr_term)) %>% 
             lm_trdff(data_structure = "cs", formula_lhs = 1, formula_rhs = 2)
     # save
     reg_Accprd[i] %>% save(file = paste(file_char, "_final_reg.RData", sep = '_'))
-    # print
-    reg_Accprd[[i]] %>% 
-    texreg(include.ci = FALSE, dcolumn = TRUE, booktabs = TRUE, digits = 3,
-           override.se = .$statistic, override.pvalues = .$p.value) %>% 
-    gsub(pattern = "VMG\\_t", replacement = "VMG", fixed = T) %>%
-    gsub(pattern = "RMW\\_t", replacement = "RMM", fixed = T) %>%
-    gsub(pattern = "tau", replacement = "tau = ") %>%
-    gsub(pattern = "g\\_PLSgroup", replacement = "group", fixed = T) %>%
-    cat() 
+    # export as html and tex file
+    reg_Accprd[[i]] %T>% 
+    htmlreg(file = paste(file_char, 'CrossSection_t.html', sep = '_'),
+            caption = "OLS-regression of cross-sectional abnormal return (t) on factors",
+            caption.above = TRUE, include.ci = FALSE, 
+            dcolumn = TRUE, booktabs = TRUE, digits = 3,
+            override.se = .$statistic, override.pvalues = .$p.value) %$% 
+    capture.output(
+        texreg(l = ., 
+               caption = "OLS-regression of cross-sectional abnormal return (t) on factors",
+               caption.above = TRUE, include.ci = FALSE, 
+               dcolumn = TRUE, booktabs = TRUE, digits = 3,
+               override.se = .$statistic, override.pvalues = .$p.value
+               ) %>% 
+        gsub(pattern = "VMG\\_t", replacement = "VMG^{ts}_t", fixed = T) %>%
+        gsub(pattern = "RMW\\_t", replacement = "RMM^{ts}_t", fixed = T) %>%
+        gsub(pattern = "tau", replacement = "tau = ") %>%
+        gsub(pattern = "g\\_PLSgroup", replacement = "group", fixed = T), 
+        file = paste(file_char, 'CrossSection_t.tex', sep = '_'), 
+            append = FALSE, type = "output"
+    )
     
     # Parameter visualization -------------------------------------------------
     qtr_term <- c(-15:10)  # a more wide event window than model
@@ -581,7 +631,7 @@ for (i in seq_along(Accprd)) {
                factor_name = c('VMG', 'RMW')
                )
     ggsave(filename = paste(file_char, "factor-tau.pdf", sep = '_'),
-           width = 16, height = 9, scale = 0.75)
+           width = 16, height = 9, scale = 0.65)
                             
     # factor:tau:g_PLS, diff-diff-diff ====
     stats_plot(reg = reg_panel, 
@@ -589,10 +639,10 @@ for (i in seq_along(Accprd)) {
                factor_name = c('VMG', 'RMW')
                )
     ggsave(filename = paste(file_char, "factor-tau-grp.pdf", sep = '_'),
-           width = 16, height = 9, scale = 0.75)
+           width = 16, height = 9, scale = 0.65)
 }
 
 dbDisconnect(QEA_db)
 
 save(reg_Accprd, 
-     file = file.path('~/OneDrive/Data.backup/QEAData', model_type, 'final_reg_total.RData'))
+     file = file.path('~/OneDrive/Data.backup/QEAData', model_type, 'Regression_Explain_AR.RData'))
