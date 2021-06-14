@@ -8,7 +8,7 @@ library(Formula)
 library(modelr)
 library(glue)
 library(broom)
-
+library(xtable)
 library(ggthemes)
 library(hrbrthemes)
 library(multipanelfigure)
@@ -29,8 +29,8 @@ load(file = "./FirmAttr.RData")
 # Import the status data of quarterly financial report 
 load(file = "./ReportInfo.RData"); rm(PreRept)
 # assign basic parameters about quarter and sample attributes
-Accprd <- months(seq(from = 0, by = 3, length = 4*1)) %>% 
-        mapply('%m+%', ymd('2013-03-31'), .) %>% `[`(.!=ymd("2016-06-30")) %>%
+Accprd <- months(seq(from = 0, by = 3, length = 4*5)) %>% 
+        mapply('%m+%', ymd('2013-03-31'), .) %>% # `[`(.!=ymd("2016-06-30")) %>%
         base::as.Date(origin = '1970-01-01') %>% 
         split(f = year(.))  # split by year
 # the type of stocks that weather had publish pre-report
@@ -113,7 +113,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                                       "stkest", sep = '_'),
                     full.names = TRUE) %>%
                 read_csv(col_types = cols(Stkcd = col_character(),
-                                          Markettype = col_factor(levels = c(1,4,16)),
+                                          Markettype = col_factor(levels = c('1','4','16')),
                                           Indus = col_factor(),  # industry category
                                           Annowk = col_factor()  # the day of week
                                           )
@@ -124,7 +124,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                                       "stkeve", sep = '_'),
                     full.names = TRUE) %>%
                 read_csv(col_types = cols(Stkcd = col_character(),
-                                          Markettype = col_factor(levels = c(1,4,16)),
+                                          Markettype = col_factor(levels = c('1','4','16')),
                                           Indus = col_factor(),  # industry category
                                           Annowk = col_factor()  # the day of week
                                           )
@@ -187,17 +187,38 @@ for (y in seq_along(Accprd)) {  # loop in year
         PLScoef %<>% add_column("term" = ff_term, .before = 1)
         # save the PLS estimators
         PLS_grp[[y]][[q]]$estimator <- PLScoef
+        
 
+        # Generate the table of PLS classification result -------------------------
+        PLS_tbl <- left_join(
+            select(PLScoef, 'term', - starts_with('sd') & ends_with('g1')) %>% 
+                gather(key = 'type', value = 'group 1', ends_with('g1')) %>% 
+                mutate(type = str_replace(type, '_g1', '')) %>% 
+                arrange(term),
+            select(PLScoef, 'term', - starts_with('sd') & ends_with('g2')) %>% 
+                gather(key = 'type', value = 'group 2', ends_with('g2')) %>% 
+                mutate(type = str_replace(type, '_g2', '')) %>% 
+                arrange(term)
+            )
+        
+        PLS_tbl$term[c(2,4,6,8)] <- NA 
+
+        xtable(PLS_tbl, label = 'tbl:PLS', auto = T, digits = 3,
+               caption = 'Penalized least squares estimation results'
+               ) %>% 
+        print(include.rownames=FALSE)
+        
+        
         # link and visual PLS cluster result with stocks feature ----------
         # and accounting indicators from quarterly earnings report 
         figure_term <- paste(Accprd[[y]][q], Pretype, Markettype, model_type, sep = '_')
         # rename the group identity using in plot (legend guide)
         if (grp_num == 2) {
-                grp_name <- c("group one", "group two")
+                grp_name <- c("Group A", "Group B")
         } else if (grp_num == 3)  {
-                grp_name <- c("group one", "group two", "group three")
+                grp_name <- c("Group A", "Group B", "Group C")
         } else if (grp_num == 4) {
-                grp_name <- c("group one", "group two", "group three", "group four")
+                grp_name <- c("Group A", "Group B", "Group C", "Group D")
         } else stop("The group number is not included in script!")
         # relabel the group name
         # 1 = group one, 2 = group two, 3 = group three...
@@ -214,15 +235,16 @@ for (y in seq_along(Accprd)) {  # loop in year
         filter(freq >= 0.03) %>% 
             ggplot(mapping = aes(x = factor(-freq), y = freq, fill = Indus)) + 
                 geom_col(position = 'dodge') +
-                labs(title = "The distribuion frequency of stocks in a industry",
-                     y = "frequency", x = 'Industry', fill = 'Industry', 
+                labs(# title = "The distribuion frequency of stocks in a industry",
+                     y = "Frequency", x = 'Industry', fill = 'Industry', 
                      caption = caption_char) + 
                 facet_wrap(~ g_PLS, ncol = grp_num, scales = 'free_x', drop = TRUE) + 
                 scale_fill_brewer(palette = 'Set1') + 
-                theme(axis.text.x = element_blank())
+                theme(axis.text.x = element_blank(),
+                      axis.title.x = element_text(inherit.blank = FALSE))
         
         ggsave(filename = paste(figure_term, "Industry.pdf", sep = '_'),
-               width = 8, height = 6, scale = 1.2)
+               width = 8, height = 6, scale = 1.0)
         
         # the day of week that the report was announced
         left_join(PLSclus, filter(ReptInfo, Accper == Accprd[[y]][q]), by = "Stkcd") %>%
@@ -234,12 +256,13 @@ for (y in seq_along(Accprd)) {  # loop in year
                ) %>%
             ggplot(aes(x = factor(freq), y = freq, fill = fct_infreq(Annowk))) +
                 geom_col(position = "dodge") + 
-                    labs(title = "The weekday of quarterly earning reports announcemented",
-                         y = "frequency", x = "Weekday", fill = "Weekday",
+                    labs(# title = "The weekday of quarterly earning reports announcemented",
+                         y = "Frequency", x = "Weekday", fill = "Weekday",
                          caption = caption_char) + 
                     facet_wrap(~g_PLS, ncol = grp_num, scales = 'free_x', drop = TRUE) + 
                     scale_fill_brewer(palette = "Blues") + 
-                    theme(axis.text.x = element_blank())
+                    theme(axis.text.x = element_blank(),
+                          axis.title.x = element_text(inherit.blank = FALSE))
         
         ggsave(filename = paste(figure_term, "Weekday.pdf", sep = '_'),
                width = 8, height = 6)
@@ -249,7 +272,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                 ggplot(mapping = aes(x = g_PLS, y = year(Listdt))) +
                 geom_boxplot(aes(fill = g_PLS), width = 0.1) + 
                 geom_violin(alpha = 0.1) +
-                    labs(y = "Stock's listed year") + 
+                    labs(y = "The listed year of Stocks") + 
                     scale_fill_brewer(palette = "Set1") + 
                     theme(legend.position = 'none')
         
@@ -281,15 +304,27 @@ for (y in seq_along(Accprd)) {  # loop in year
                         scale_fill_brewer(palette = "Greys") + 
                         theme(axis.title.x = element_text(inherit.blank = FALSE))
         
+        ggsave(filename = paste(figure_term, "Opacity.pdf", sep = '_'),
+               plot = f_opacity,
+               width = 8, height = 8, scale = 0.8)        
+        
         # the internal distribution of different opacity levels firms in each group
         f_group_opacity <- g_accfea %>% 
                 count(g_PLS, CompanyOpacity) %>% group_by(g_PLS) %>% 
                 mutate('freq' = n / sum(n)) %>% 
                     ggplot(aes(x = CompanyOpacity, y = freq)) +
                         geom_col(aes(fill = g_PLS), position = "dodge") +
-                            labs(y = "frequency", x = "The category of company opacity",
-                                 fill = "group (PLS)") +
-                            scale_fill_brewer(palette = "Set1")
+                            labs(y = "Frequency", 
+                                 x = "The category of company opacity",
+                                 fill = "Classification(C-Lasso)") +
+                            scale_fill_brewer(palette = "Set1") + 
+                        # theme(axis.title.x = element_text(inherit.blank = FALSE)) +
+                        theme_bw() + 
+                        theme(legend.position = c(.80,.85))
+        
+        ggsave(filename = paste(figure_term, "grp-Opacity.pdf", sep = '_'),
+               plot = f_group_opacity,
+               width = 8, height = 6)    
         
         # company size and company opacity
         title_char <- "The relationship between company size (logrithm) and company opacity"
@@ -301,25 +336,40 @@ for (y in seq_along(Accprd)) {  # loop in year
                 new_scale_fill() + 
                 geom_boxplot(aes(fill = g_PLS), width = 0.1) + 
                     scale_fill_brewer(palette = "Set1") + 
-                    labs(title = title_char, y = "The logarithm of company size") + 
-                    facet_wrap(vars(CompanyOpacity), nrow = grp_num) + 
-                    theme(legend.position = 'none')
+                    labs(# title = title_char, 
+                        y = "The logarithm of company size") + 
+                    facet_wrap(vars(CompanyOpacity), nrow = grp_num) 
         
-        multi_panel_figure(width = 320, height = 320, columns = 2, rows = 3,
+        ggsave(filename = paste(figure_term, "Size-Opacity.pdf", sep = '_'),
+               plot = f_size_opacity,
+               width = 8, height = 6)    
+        
+        multi_panel_figure(width = 240, height = 240, columns = 2, rows = 3,
                            panel_label_type = "decimal") %>%
         fill_panel(f_opacity, column = 1, row = 1) %>%
         fill_panel(f_group_opacity, column = 2, row = 1) %>% 
-        fill_panel(f_size_opacity, column = 1:2, row = 2:3) %>% 
-                save_multi_panel_figure(paste(figure_term, "Opacity.pdf", sep = '_'))
+        fill_panel(f_size_opacity + theme(legend.position = 'none') , 
+                   column = 1:2, row = 2:3) %>% 
+                save_multi_panel_figure(paste(figure_term, "grp-Size-Opacity.pdf", sep = '_'))
                 
         # size, annual
         f_acc_size <- g_accfea %>% 
                 ggplot(mapping = aes(x = g_PLS, y = log(CompanySize))) +
                 geom_boxplot(aes(fill = g_PLS), width = 0.1) + 
                 geom_violin(alpha = 0.1) +
-                    labs(y = "Stock's market size (taked logrithm)") +
-                    scale_fill_brewer(palette = "Set1") +
-                    theme(legend.position = "none")
+                    labs(y = "Stock's market size (taked logrithm)", 
+                         fill = "Classification(C-Lasso)") +
+                    scale_fill_brewer(palette = "Set1") + 
+                    theme(legend.position = "bottom")
+        
+        ggsave(filename = paste(figure_term, "grp-Size.pdf", sep = '_'),
+               plot = f_acc_size,
+               width = 6, height = 8)    
+        
+        multi_panel_figure(width = 160, height = 120, columns = 2, rows = 1) %>%
+            fill_panel(f_acc_size + theme(legend.position = "none"), column = 1, row = 1) %>%
+            fill_panel(f_history, column = 2, row = 1) %>%
+                save_multi_panel_figure(paste(figure_term, "Size-History.pdf", sep = '_'))
         
         # Calculate AR and CAR within event window -----------------------
         
@@ -349,30 +399,36 @@ for (y in seq_along(Accprd)) {  # loop in year
         filter(lm_gstk_tidy, term == "(Intercept)", Statistics == "estimate") %>% 
         ggplot(aes(x = Parameter, y = ..scaled.., fill = g_PLS)) +
             geom_density(alpha = 0.85) + 
-            labs(title = "The distribution of estimate intercepts",
+            labs(# title = "The distribution of estimate intercepts",
                  y = "Density", x = "The value of estimated intercept",
-                 fill = "Classification (PLS)") +
+                 fill = "Classification (C-Lasso)") +
             scale_fill_brewer(palette = 'Set1') + 
             theme_bw() + 
             theme(legend.position = c(.80,.85))
         
         ggsave(filename = paste(figure_term, "Intercept.pdf", sep = '_'),
-               width = 8, height = 6)
+               width = 6, height = 6)
         
         # the distribution of coefficients of explanation variables
         f_coef <- lm_gstk_tidy %>% 
                 filter(term != "(Intercept)", Statistics == "estimate") %>% 
+                mutate(term = str_replace(term, 'mkt_rf', 'MKT')) %>% # rename
                 ggplot(aes(x = Parameter, y=..scaled.., fill = g_PLS)) +
                     geom_density(alpha = 0.85) + 
                     scale_fill_brewer(palette = "Set1") +
                     facet_wrap(vars(term), nrow = length(ff_term)) +
-                    labs(title = "The distribution of estimate factors",
+                    labs(# title = "The distribution of estimate factors",
                          y = "Density", x = "The value of estimated coefficient") +
                     theme_bw() +
                     theme(legend.position = "none",
                           axis.text.y = element_blank(),
                           axis.ticks.y = element_blank()
                           )
+        
+        ggsave(filename = paste(figure_term, "ols-coef.pdf", sep = '_'),
+               plot = f_coef,
+               width = 6, height = 8)
+        
         
         # calculate NR, AR, and CAR 
         win_stk %<>% mutate(
@@ -451,10 +507,10 @@ for (y in seq_along(Accprd)) {  # loop in year
             geom_point(aes(shape = g_PLS), size = 1.5) + 
                 scale_color_manual(values = c(brewer.pal(grp_num, "Set1"), "#999999")) +
                 scale_x_continuous(breaks = seq(-30, 30, by = 5)) + 
-                labs(title = title_char, caption = caption_char,
+                labs(# title = title_char, caption = caption_char,
                      x = TeX("Timeline ($\\tau$)"), y = 'Cumulative Abnormal Return (CAR)', 
-                     colour = 'Classification (PLS)', linetype = 'Classification (PLS)',
-                     shape = 'Classification (PLS)'
+                     colour = 'Classification (C-Lasso)', linetype = 'Classification (C-Lasso)',
+                     shape = 'Classification (C-Lasso)'
                      ) + 
                 geom_hline(yintercept = 0, linetype = "dashed", color = "grey", size = 1.5) +
             geom_rect(data = rect_index, 
@@ -468,7 +524,7 @@ for (y in seq_along(Accprd)) {  # loop in year
                       axis.title.x = element_text(inherit.blank = FALSE))
             
         ggsave(filename = paste(figure_term, "gCAR.pdf", sep = '_'),
-               plot = f_car, width = 16, height = 9, scale = 0.75)
+               plot = f_car, width = 16, height = 9, scale = 0.60)
         
         # Export the comprehensive plot
         multi_panel_figure(width = 280, height = 240, columns = 7, rows = 6) %>%

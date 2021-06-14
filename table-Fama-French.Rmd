@@ -55,7 +55,7 @@ if (model_type == 'CH3') {
 }
   
 # import regression results of portfolios by quarter =====
-load(glue('~/OneDrive/Data.backup/QEAData/{model_type}/quarterly_{value_base}_{model_type}.RData'))
+load(glue('~/OneDrive/Data.backup/QEAData/{model_type}/Regression_Fama-French_quarterly_{value_base}_{model_type}.RData'))
 # quarter terms
 Accprd <- as.Date(names(potfolreg), origin = '1970-01-01')
 # statistics of regression

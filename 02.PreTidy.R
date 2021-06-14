@@ -103,7 +103,7 @@ setwd('~/OneDrive/Data.backup/QEAData/')  # setup the working directory
 # the sequence of accounting periods
 Accprd <- months(seq(from = 0, by = 3, length = len_term)) %>% 
         mapply('%m+%', start_term, .) %>% 
-        base::as.Date(origin = '1970-01-01') %>% `[`(.!=ymd("2016-06-30")) %>% 
+        base::as.Date(origin = '1970-01-01') %>% # `[`(.!=ymd("2016-06-30")) %>% 
         split(f = year(.))  # split by year
 # create export directory
 if (!all(dir.exists(file.path(model_type, names(Accprd))))  # annual
@@ -367,8 +367,9 @@ for (y in seq_along(Accprd)) {  # loop in year
     }
 }
 
-rm(list = setdiff(ls(), c("Accprd", "model_type", "model_formula", "Pre_type", "Markettype", 
-                          "trddat", "trdday", "ff_factor", "Nrrate")))
+rm(list = setdiff(ls(), c("model_type", "model_formula", 'ff_term', "Pre_type", "Markettype",
+                          "Accprd", "trddat", "trdday", "ff_factor", "Nrrate"))
+   )
 gc()
 
 # Part III, Path of stock returns when earnings report are released -------
@@ -442,7 +443,6 @@ library(DBI)
 library(RSQLite)
 library(dbplyr)
 library(broom)
-
 # link to database
 QEA_db <- dbConnect(RSQLite::SQLite(), "./QEA_db.sqlite")
 ReptInfo_Acc_EPS <- tbl(QEA_db, "Income_Statement") %>% 
@@ -529,7 +529,7 @@ for (i in seq_along(Accprd)) {
                       ) %>% 
             unnest(cols = 'reg_FM_2nd') %>% 
             group_by(term) %>% 
-            summarise_if(.predicate = is.numeric, .funs = mean) %>% 
+            summarise(across(where(is.numeric), mean)) %>% 
             mutate(term = factor(term, levels = c('(Intercept)' ,ff_term))) %>% 
             arrange(term)
     
